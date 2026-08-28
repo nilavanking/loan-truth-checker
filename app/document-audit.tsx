@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-type AuditValues = {
+export type AuditValues = {
   loanAmount: string;
   annualRate: string;
   apr: string;
@@ -48,7 +48,7 @@ type Finding = {
   detail: string;
 };
 
-const emptyValues: AuditValues = {
+export const emptyValues: AuditValues = {
   loanAmount: "",
   annualRate: "",
   apr: "",
@@ -64,12 +64,12 @@ const emptyValues: AuditValues = {
   rest: "unknown",
 };
 
-const money = (value: number) =>
+export const money = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value || 0);
 
-const numberValue = (value: string) => Number(value.replace(/[^0-9.-]/g, "")) || 0;
+export const numberValue = (value: string) => Number(value.replace(/[^0-9.-]/g, "")) || 0;
 
-function reducingEmi(principal: number, annualRate: number, months: number) {
+export function reducingEmi(principal: number, annualRate: number, months: number) {
   if (!principal || !months) return 0;
   const rate = annualRate / 1200;
   if (!rate) return principal / months;
@@ -77,7 +77,7 @@ function reducingEmi(principal: number, annualRate: number, months: number) {
   return (principal * rate * growth) / (growth - 1);
 }
 
-function flatEmi(principal: number, annualRate: number, months: number) {
+export function flatEmi(principal: number, annualRate: number, months: number) {
   if (!principal || !months) return 0;
   return (principal + principal * (annualRate / 100) * (months / 12)) / months;
 }
@@ -96,7 +96,7 @@ function capture(text: string, patterns: RegExp[]) {
   return "";
 }
 
-function parseValues(text: string): AuditValues {
+export function parseValues(text: string): AuditValues {
   const compact = text.replace(/\r/g, "").replace(/[ \t]+/g, " ");
   const lower = compact.toLowerCase();
   const tenureMatch = compact.match(/(?:loan tenure|tenure|loan term|number of (?:instalments|installments|emis))[^\d]{0,35}(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|mos?)?/i);

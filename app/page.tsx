@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, TrendingDown } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, ShieldEllipsis, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DocumentAudit } from "@/app/document-audit";
+import { ApprovalGate } from "@/app/approval-gate";
 
 type Method = "reducing" | "flat";
 type Rest = "monthly" | "annual";
@@ -165,7 +166,7 @@ export default function Home() {
     <header className="topbar"><div className="brand-mark"><ShieldCheck size={22}/></div><div><p>PERSONAL FINANCE TOOL</p><h1>Loan Truth Checker</h1></div><span className="private">Private</span></header>
     <section className="intro"><div><span className="eyebrow">SUNDARAM + RBI CHECK</span><h2>Every rupee, accounted for.</h2><p>Compare formulas, reconstruct a quotation and expose charges before signing.</p></div><div className="trust"><BadgeCheck size={18}/><span>Rules snapshot<br/><strong>28 Aug 2026</strong></span></div></section>
     <Tabs defaultValue="calculate" className="workspace">
-      <TabsList className="tab-list"><TabsTrigger value="calculate"><Calculator size={16}/>Calculate</TabsTrigger><TabsTrigger value="compare"><Scale size={16}/>Compare</TabsTrigger><TabsTrigger value="scan"><ScanLine size={16}/>Scan KFS</TabsTrigger><TabsTrigger value="audit"><SearchCheck size={16}/>Check quote</TabsTrigger><TabsTrigger value="prepay"><TrendingDown size={16}/>Prepay</TabsTrigger><TabsTrigger value="rules"><FileCheck2 size={16}/>Rules</TabsTrigger></TabsList>
+      <TabsList className="tab-list"><TabsTrigger value="calculate"><Calculator size={16}/>Calculate</TabsTrigger><TabsTrigger value="compare"><Scale size={16}/>Compare</TabsTrigger><TabsTrigger value="scan"><ScanLine size={16}/>Scan KFS</TabsTrigger><TabsTrigger value="gate"><ShieldEllipsis size={16}/>Approval gate</TabsTrigger><TabsTrigger value="audit"><SearchCheck size={16}/>Check quote</TabsTrigger><TabsTrigger value="prepay"><TrendingDown size={16}/>Prepay</TabsTrigger><TabsTrigger value="rules"><FileCheck2 size={16}/>Rules</TabsTrigger></TabsList>
 
       <TabsContent value="calculate" className="panel">
         <div className="panel-heading"><div><span>01</span><h3>EMI calculator</h3></div><p>Flat, monthly rest and annual rest</p></div>
@@ -193,8 +194,12 @@ export default function Home() {
         <DocumentAudit />
       </TabsContent>
 
+      <TabsContent value="gate" className="panel gate-panel">
+        <ApprovalGate />
+      </TabsContent>
+
       <TabsContent value="audit" className="panel">
-        <div className="panel-heading"><div><span>04</span><h3>Quotation investigator</h3></div><p>Enter exactly what the lender gives you</p></div>
+        <div className="panel-heading"><div><span>05</span><h3>Quotation investigator</h3></div><p>Enter exactly what the lender gives you</p></div>
         <div className="form-grid"><Field label="Loan amount stated" value={quotePrincipal} onChange={setQuotePrincipal} suffix="₹"/><Field label="Interest stated" value={quoteRate} onChange={setQuoteRate} suffix="% p.a."/><Field label="Tenure" value={quoteMonths} onChange={setQuoteMonths} suffix="months"/><Field label="Exact EMI quoted" value={quoteEmi} onChange={setQuoteEmi} suffix="₹"/></div>
         <div className="subhead">Compulsory and deducted charges</div>
         <div className="form-grid"><Field label="Processing + GST" value={processing} onChange={setProcessing} suffix="₹"/><Field label="Documentation + GST" value={documentation} onChange={setDocumentation} suffix="₹"/><Field label="Credit-life insurance" value={insurance} onChange={setInsurance} suffix="₹"/><Field label="Other compulsory charges" value={other} onChange={setOther} suffix="₹"/><Field label="Advance EMI deducted" value={advanceEmi} onChange={setAdvanceEmi} suffix="₹"/></div>
@@ -206,7 +211,7 @@ export default function Home() {
       </TabsContent>
 
       <TabsContent value="prepay" className="panel">
-        <div className="panel-heading"><div><span>05</span><h3>Prepayment and closure</h3></div><p>See the real benefit after charges</p></div>
+        <div className="panel-heading"><div><span>06</span><h3>Prepayment and closure</h3></div><p>See the real benefit after charges</p></div>
         <div className="form-grid"><Field label="Payment after EMI number" value={prepayMonth} onChange={setPrepayMonth} suffix="month"/><Field label="Extra principal payment" value={prepayAmount} onChange={setPrepayAmount} suffix="₹"/><Field label="Prepayment charge" value={chargeRate} onChange={setChargeRate} suffix="%"/><Field label="GST on charge" value={chargeGst} onChange={setChargeGst} suffix="%"/></div>
         <div className="subhead">Part-payment result</div><div className="metrics audit-metrics"><Metric label="Balance at selected month" value={money(prepay.balance)}/><Metric label="New principal balance" value={money(prepay.newBalance)}/><Metric label="Charge including GST" value={money(prepay.charge)} tone="warn"/><Metric label="Interest saved" value={money(prepay.interestSaved)} tone="good"/><Metric label="Months saved" value={String(prepay.monthsSaved)}/><Metric label="Net benefit after charge" value={money(prepay.netBenefit)} tone={prepay.netBenefit>=0?"good":"warn"}/></div>
         <div className="subhead">Full closure result</div><div className="closure-card"><div><span>Estimated settlement amount</span><strong>{money(prepay.settlement)}</strong></div><div><span>Future interest avoided</span><strong>{money(prepay.closureInterestSaved)}</strong></div><div><span>Net benefit after closure charge</span><strong>{money(prepay.closureNet)}</strong></div></div>
@@ -214,7 +219,7 @@ export default function Home() {
       </TabsContent>
 
       <TabsContent value="rules" className="panel">
-        <div className="panel-heading"><div><span>06</span><h3>Signing checklist</h3></div><p>Evidence required before disbursement</p></div>
+        <div className="panel-heading"><div><span>07</span><h3>Signing checklist</h3></div><p>Evidence required before disbursement</p></div>
         <div className="rule-card featured"><ShieldCheck/><div><span>CONFIRMED SUNDARAM METHOD</span><h4>Outstanding principal at monthly rests</h4><p>Sundaram’s published car-loan terms apply Customer IRR to outstanding principal at monthly rests.</p></div></div>
         <div className="rule-grid"><article><span>RBI KFS</span><h4>Complete price label</h4><p>Annual rate, APR, EMI, charges and amortisation schedule.</p></article><article><span>RATE RANGE</span><h4>7%–20% indicative</h4><p>A stated 6.5% requires written clarification.</p></article><article><span>UNLISTED FEES</span><h4>Consent required</h4><p>An undisclosed fee cannot be added later without explicit consent.</p></article><article><span>THIRD-PARTY COSTS</span><h4>Collect receipts</h4><p>Insurance and similar charges must be separately disclosed.</p></article></div>
         <div className="checklist"><h4>Check before signing</h4>{["Official sanction letter","Key Facts Statement (KFS)","Customer IRR / annualised interest rate","Flat or reducing method stated","Monthly/annual rest period stated","APR computation sheet","Exact EMI and number of instalments","Total interest and total repayment","Complete amortisation schedule","Processing/documentation fees with GST","Insurance and third-party receipts","Advance EMI and broken-period interest","Part-payment and foreclosure terms"].map((item,i)=><label key={item}><input type="checkbox"/><span>{String(i+1).padStart(2,"0")}</span>{item}</label>)}</div>
