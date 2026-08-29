@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Image from "next/image";
-import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, ShieldEllipsis, TrendingDown, Wrench } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Landmark, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, ShieldEllipsis, TrendingDown, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { DocumentAudit } from "@/app/document-audit";
 import { ApprovalGate } from "@/app/approval-gate";
 import { TruthAudit } from "@/app/truth-audit";
 import { AuditToolkit } from "@/app/audit-toolkit";
+import { FinancierComparison } from "@/app/financier-comparison";
 
 type Method = "reducing" | "flat";
 type Rest = "monthly" | "annual";
@@ -167,7 +168,7 @@ export default function Home() {
     <header className="topbar"><div className="brand-mark"><Image unoptimized className="brand-logo" src="/loan-truth-checker-logo-v2.png" alt="Loan Truth Checker logo" width={74} height={74} priority/></div><div><p>INDEPENDENT LOAN AUDITOR</p><h1>Loan Truth Checker</h1></div><span className="private">Local calculation</span></header>
     <section className="intro"><div><span className="eyebrow">INDEPENDENT LOAN-COST & QUOTATION AUDIT</span><h2>Every rupee, accounted for.</h2><p>Reveal the true cost, missing disclosures and signing risk before accepting a vehicle loan.</p></div><div className="trust"><BadgeCheck size={18}/><span>Rules snapshot<br/><strong>29 Aug 2026</strong></span></div></section>
     <Tabs defaultValue="truth" className="workspace">
-      <TabsList className="tab-list"><TabsTrigger value="truth"><ShieldCheck size={16}/>Truth audit</TabsTrigger><TabsTrigger value="calculate"><Calculator size={16}/>Calculate</TabsTrigger><TabsTrigger value="compare"><Scale size={16}/>Compare</TabsTrigger><TabsTrigger value="scan"><ScanLine size={16}/>Scan KFS</TabsTrigger><TabsTrigger value="gate"><ShieldEllipsis size={16}/>Approval gate</TabsTrigger><TabsTrigger value="audit"><SearchCheck size={16}/>Check quote</TabsTrigger><TabsTrigger value="prepay"><TrendingDown size={16}/>Prepay</TabsTrigger><TabsTrigger value="toolkit"><Wrench size={16}/>Toolkit</TabsTrigger><TabsTrigger value="rules"><FileCheck2 size={16}/>Rules</TabsTrigger></TabsList>
+      <TabsList className="tab-list"><TabsTrigger value="truth"><ShieldCheck size={16}/>Truth audit</TabsTrigger><TabsTrigger value="calculate"><Calculator size={16}/>Calculate</TabsTrigger><TabsTrigger value="compare"><Scale size={16}/>Compare</TabsTrigger><TabsTrigger value="financiers"><Landmark size={16}/>Financiers</TabsTrigger><TabsTrigger value="scan"><ScanLine size={16}/>Scan KFS</TabsTrigger><TabsTrigger value="gate"><ShieldEllipsis size={16}/>Approval gate</TabsTrigger><TabsTrigger value="audit"><SearchCheck size={16}/>Check quote</TabsTrigger><TabsTrigger value="prepay"><TrendingDown size={16}/>Prepay</TabsTrigger><TabsTrigger value="toolkit"><Wrench size={16}/>Toolkit</TabsTrigger><TabsTrigger value="rules"><FileCheck2 size={16}/>Rules</TabsTrigger></TabsList>
 
       <TabsContent value="truth" className="panel truth-panel"><TruthAudit/></TabsContent>
 
@@ -192,6 +193,8 @@ export default function Home() {
         <div className="difference-table"><div><span>Comparison</span><b>EMI difference</b><b>Interest difference</b><b>Total difference</b></div>{comparisons.slice(1).map(x=><div key={x.label}><span>{x.label} vs monthly rest</span><b>{money(x.payment-comparisons[0].payment)}</b><b>{money(x.interest-comparisons[0].interest)}</b><b>{money(x.total-comparisons[0].total)}</b></div>)}</div>
         <div className="action-row"><Button onClick={share}><Share2 size={16}/>Share summary</Button><Button variant="outline" onClick={()=>window.print()}><Printer size={16}/>Save as PDF</Button></div>
       </TabsContent>
+
+      <TabsContent value="financiers" className="panel financier-panel"><FinancierComparison/></TabsContent>
 
       <TabsContent value="scan" className="panel scan-panel">
         <DocumentAudit />

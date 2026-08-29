@@ -24,6 +24,7 @@ export type LoanAuditInput = {
   months: number;
   lenderEmi?: number;
   lenderApr?: number;
+  lenderNetDisbursement?: number;
   lenderTotalInterest?: number;
   lenderTotalRepayment?: number;
   charges: ChargeInput[];
@@ -103,8 +104,9 @@ export function auditLoan(input: LoanAuditInput) {
   const upfrontCharges = input.charges.filter((item) => item.treatment === "upfront").reduce((sum, item) => sum + item.amount, 0);
   const allCharges = input.charges.filter((item) => item.treatment !== "not-applicable").reduce((sum, item) => sum + item.amount, 0);
   const grossSanctioned = input.baseLoanAmount + financedCharges;
-  const netAvailable = Math.max(0, input.baseLoanAmount - deductedCharges);
-  const effectiveProceeds = Math.max(0, input.baseLoanAmount - deductedCharges - upfrontCharges);
+  const derivedNetAvailable = Math.max(0, input.baseLoanAmount - deductedCharges);
+  const netAvailable = input.lenderNetDisbursement && input.lenderNetDisbursement > 0 ? input.lenderNetDisbursement : derivedNetAvailable;
+  const effectiveProceeds = Math.max(0, netAvailable - upfrontCharges);
   const calculatedEmi = input.method === "flat" ? flatEmi(grossSanctioned, input.annualRate, months) : reducingEmi(grossSanctioned, input.annualRate, months);
   const totalEmiPayments = calculatedEmi * months;
   const totalInterest = totalEmiPayments - grossSanctioned;
@@ -120,6 +122,7 @@ export function auditLoan(input: LoanAuditInput) {
   const repaymentMatch = closeEnough(input.lenderTotalRepayment, (input.lenderEmi || calculatedEmi) * months, totalTolerance);
   const interestMatch = closeEnough(input.lenderTotalInterest, (input.lenderEmi || calculatedEmi) * months - grossSanctioned, totalTolerance);
   const aprMatch = input.lenderApr && input.lenderApr > 0 ? Math.abs(input.lenderApr - apr.nominalApr) <= 0.1 : null;
+  const netDisbursementMatch = input.lenderNetDisbursement && input.lenderNetDisbursement > 0 ? Math.abs(input.lenderNetDisbursement - derivedNetAvailable) <= 5 : null;
   const kfsPresent = input.kfs.filter((item) => item.status === "present").length;
   const kfsConflicting = input.kfs.filter((item) => item.status === "conflicting");
   const kfsMissing = input.kfs.filter((item) => item.status === "missing");
@@ -136,6 +139,7 @@ export function auditLoan(input: LoanAuditInput) {
   if (repaymentMatch === false) findings.push({ severity: "stop", title: "Total repayment mismatch", detail: "Lender total repayment does not equal EMI multiplied by the number of instalments within tolerance.", why: "A difference may indicate a balloon payment, advance instalment, fee, or an incorrect disclosure.", ask: "Please reconcile every payment in the repayment schedule." });
   if (interestMatch === false) findings.push({ severity: "stop", title: "Disclosed interest mismatch", detail: "The disclosed interest does not reconcile with total instalments minus gross principal.", why: "Total interest should be reproducible from the payment schedule.", ask: "Please provide a corrected total-interest figure." });
   if (aprMatch === false) findings.push({ severity: "stop", title: "APR mismatch", detail: `Lender APR ${input.lenderApr?.toFixed(2)}%; independently calculated APR ${apr.nominalApr.toFixed(2)}%.`, why: "APR must reflect the loan's actual cash flows and compulsory charges.", ask: "Please provide the lender APR formula and corrected KFS." });
+  if (netDisbursementMatch === false) findings.push({ severity: "warning", title: "Net disbursement does not reconcile", detail: `Lender net disbursement ₹${moneyRound(input.lenderNetDisbursement || 0).toLocaleString("en-IN")}; itemised calculation ₹${moneyRound(derivedNetAvailable).toLocaleString("en-IN")}.`, why: "The sanctioned amount minus disclosed deductions should reproduce the amount actually made available.", ask: "Please provide an itemised disbursement statement explaining the difference." });
   if (kfsConflicting.length) findings.push({ severity: "stop", title: "KFS contains conflicting information", detail: kfsConflicting.map((item) => item.label).join(", "), why: "Conflicting written terms prevent a safe signing decision.", ask: "Please issue one corrected KFS with consistent figures." });
   if (criticalMissing.length) findings.push({ severity: "warning", title: "Critical KFS information is not verified", detail: criticalMissing.map((item) => item.label).join(", "), why: "The signing decision cannot be based only on the EMI; cost, remedies and conditions must also be disclosed.", ask: `Please provide: ${criticalMissing.map((item) => item.label).join(", ")}.` });
 
@@ -156,12 +160,12 @@ export function auditLoan(input: LoanAuditInput) {
   const decision = hasStop ? "do-not-sign" : criticalMissing.length || findings.some((item) => ["warning", "verify"].includes(item.severity)) ? "verify" : "ready";
 
   return {
-    grossSanctioned, netAvailable, effectiveProceeds, financedCharges, deductedCharges, upfrontCharges,
+    grossSanctioned, netAvailable, derivedNetAvailable, effectiveProceeds, financedCharges, deductedCharges, upfrontCharges,
     totalFees: allCharges, calculatedEmi, totalEmiPayments, totalInterest, totalRepayment, trueBorrowingCost,
     nominalRate: input.annualRate, apr: apr.nominalApr, effectiveAnnualRate: apr.effectiveAnnualRate,
     equivalentReducingRate, sameNumberReducingEmi, sameNumberReducingTotal,
     flatExtraCost: input.method === "flat" ? totalEmiPayments - sameNumberReducingTotal : 0,
-    emiMatch, repaymentMatch, interestMatch, aprMatch, kfsCompleteness, kfsMissing, criticalMissing,
+    emiMatch, repaymentMatch, interestMatch, aprMatch, netDisbursementMatch, kfsCompleteness, kfsMissing, criticalMissing,
     findings, componentScores, truthScore, decision,
   };
 }
