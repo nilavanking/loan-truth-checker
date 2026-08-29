@@ -164,7 +164,7 @@ export function TruthAudit() {
     <article className="truth-card rule-control">
       <div className="truth-step"><span>7</span><div><strong>Rule status control</strong><small>Regulations, guidance and lender policy remain separate</small></div></div>
       <div className="rule-status-grid">{RULES.map((rule) => <article key={rule.title}><StatusPill value={rule.status}/><h3>{rule.title}</h3><dl><div><dt>Authority</dt><dd>{rule.authority}</dd></div><div><dt>Published</dt><dd>{rule.publicationDate}</dd></div><div><dt>Effective</dt><dd>{rule.effectiveDate}</dd></div><div><dt>Last verified</dt><dd>{rule.lastChecked}</dd></div></dl><p>{rule.explanation}</p>{rule.source.startsWith("http") ? <a href={rule.source} target="_blank" rel="noreferrer">Official source</a> : <small>{rule.source}</small>}</article>)}</div>
-      <p className="independence"><ShieldCheck/> Independent tool. Not affiliated with or endorsed by RBI, Sundaram Finance, or any lender.</p>
+      <p className="independence"><ShieldCheck/> Independent tool. Not an official RBI application and not affiliated with or endorsed by any bank, NBFC, or lender.</p>
     </article>
   </section>;
 }

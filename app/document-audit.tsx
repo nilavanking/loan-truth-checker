@@ -292,7 +292,7 @@ export function DocumentAudit() {
       return list;
     }
     if (values.method === "unknown") list.push({ level: "verify", title: "Interest method not stated", detail: "Ask whether the quoted rate is flat or reducing balance." });
-    if (values.method === "reducing" && values.rest === "unknown") list.push({ level: "verify", title: "Rest frequency not stated", detail: "Ask whether the balance is reduced monthly or annually. Sundaram’s published policy describes monthly rests." });
+    if (values.method === "reducing" && values.rest === "unknown") list.push({ level: "verify", title: "Rest frequency not stated", detail: "Ask whether the outstanding balance is recalculated monthly, annually, or at another interval, and confirm it against the KFS." });
     if (!values.apr) list.push({ level: "verify", title: "APR not detected", detail: "APR is the best comparison number because it includes applicable charges." });
 
     const statedEmi = numberValue(values.emi);
@@ -485,7 +485,7 @@ export function DocumentAudit() {
           <Button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(reportText)}`, "_blank", "noopener,noreferrer")}><MessageCircle size={17} /> WhatsApp report</Button>
           <Button type="button" variant="outline" onClick={() => window.print()}><Printer size={17} /> Save / print PDF</Button>
         </div>
-        <p className="report-disclaimer">This is an independent mathematical check, not a Sundaram Finance or RBI app. Confirm every extracted value against the signed KFS and loan agreement.</p>
+        <p className="report-disclaimer">This is an independent mathematical check, not an official RBI, bank, NBFC, or lender application. Confirm every extracted value against the signed KFS and loan agreement.</p>
       </div>
     </section>
   );
