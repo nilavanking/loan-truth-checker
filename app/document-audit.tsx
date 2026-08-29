@@ -98,7 +98,6 @@ function capture(text: string, patterns: RegExp[]) {
 
 export function parseValues(text: string): AuditValues {
   const compact = text.replace(/\r/g, "").replace(/[ \t]+/g, " ");
-  const lower = compact.toLowerCase();
   const tenureMatch = compact.match(/(?:loan tenure|tenure|loan term|number of (?:instalments|installments|emis))[^\d]{0,35}(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|mos?)?/i);
   let months = tenureMatch?.[1] || "";
   if (months && tenureMatch?.[2]?.toLowerCase().startsWith("y")) months = String(Math.round(Number(months) * 12));
@@ -185,6 +184,7 @@ export function DocumentAudit() {
     setValues(parsed);
     setScheduleRows(rows);
     setFileName(name);
+    localStorage.setItem("loan-truth-checker:last-kfs-extraction", JSON.stringify({ name, extractedAt: new Date().toISOString(), values: parsed }));
     const detected = Object.entries(parsed).filter(([key, value]) => !["method", "rest"].includes(key) && value).length;
     setStatus(`Detected ${detected} loan figures${rows.length ? ` and ${rows.length} schedule rows` : ""}. Review and correct any OCR errors below.`);
   };

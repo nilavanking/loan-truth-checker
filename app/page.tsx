@@ -1,13 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, ShieldEllipsis, TrendingDown } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, ShieldEllipsis, TrendingDown, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DocumentAudit } from "@/app/document-audit";
 import { ApprovalGate } from "@/app/approval-gate";
+import { TruthAudit } from "@/app/truth-audit";
+import { AuditToolkit } from "@/app/audit-toolkit";
 
 type Method = "reducing" | "flat";
 type Rest = "monthly" | "annual";
@@ -37,7 +39,8 @@ function impliedRate(p: number, emi: number, months: number) {
   let low = 0, high = 100;
   for (let i = 0; i < 100; i++) {
     const mid = (low + high) / 2;
-    reducingEmi(p, mid, months) < emi ? low = mid : high = mid;
+    if (reducingEmi(p, mid, months) < emi) low = mid;
+    else high = mid;
   }
   return (low + high) / 2;
 }
@@ -137,14 +140,11 @@ export default function Home() {
     let brokenDays=0;
     if(disbursalDate&&firstEmiDate){const days=(new Date(firstEmiDate).getTime()-new Date(disbursalDate).getTime())/86400000;brokenDays=Math.max(0,Math.round(days-30));}
     const brokenInterest=p*stated/100/365*brokenDays,flags:string[]=[];
-    if(stated&&stated<7)flags.push("The stated rate is below Sundaram’s published indicative 7%–20% annualised car-loan range. Obtain written confirmation.");
-    if(emi&&candidates[0].name!=="monthly-rest reducing")flags.push("The quoted EMI is closest to "+candidates[0].name+", not Sundaram’s standard monthly-rest result.");
+    if(emi&&candidates[0].name!=="monthly-rest reducing")flags.push("The quoted EMI is closest to "+candidates[0].name+", not the monthly reducing-balance result.");
     if(emi&&unexplained>100)flags.push("The EMI behaves as if approximately "+money(unexplained)+" extra principal was financed.");
     if(emi&&realRate>stated+.1)flags.push("The quoted EMI implies approximately "+realRate.toFixed(2)+"% monthly-rest interest.");
     if(fees&&emi)flags.push("Compulsory/upfront charges raise estimated APR to approximately "+apr.toFixed(2)+"%.");
     if(brokenInterest>1)flags.push("Dates indicate about "+brokenDays+" extra days and estimated broken-period interest of "+money(brokenInterest)+".");
-    if(num(processing)>p*.05)flags.push("Processing fee exceeds Sundaram’s published maximum of 5% before GST.");
-    if(num(documentation)>5500)flags.push("Documentation charge exceeds Sundaram’s published maximum of ₹5,500 before GST.");
     return {emi,expectedMonthly,expectedAnnual,expectedFlat,realRate,unexplained,apr,total:emi*n,likely:emi?candidates[0].name:"Enter the exact EMI",flags,brokenInterest};
   },[quotePrincipal,quoteRate,quoteMonths,quoteEmi,processing,documentation,insurance,other,advanceEmi,disbursalDate,firstEmiDate]);
 
@@ -163,16 +163,18 @@ export default function Home() {
   const scheduleIsYearly=base.isAnnualRest||scheduleView==="yearly";
 
   return <main>
-    <header className="topbar"><div className="brand-mark"><ShieldCheck size={22}/></div><div><p>PERSONAL FINANCE TOOL</p><h1>Loan Truth Checker</h1></div><span className="private">Private</span></header>
-    <section className="intro"><div><span className="eyebrow">SUNDARAM + RBI CHECK</span><h2>Every rupee, accounted for.</h2><p>Compare formulas, reconstruct a quotation and expose charges before signing.</p></div><div className="trust"><BadgeCheck size={18}/><span>Rules snapshot<br/><strong>28 Aug 2026</strong></span></div></section>
-    <Tabs defaultValue="calculate" className="workspace">
-      <TabsList className="tab-list"><TabsTrigger value="calculate"><Calculator size={16}/>Calculate</TabsTrigger><TabsTrigger value="compare"><Scale size={16}/>Compare</TabsTrigger><TabsTrigger value="scan"><ScanLine size={16}/>Scan KFS</TabsTrigger><TabsTrigger value="gate"><ShieldEllipsis size={16}/>Approval gate</TabsTrigger><TabsTrigger value="audit"><SearchCheck size={16}/>Check quote</TabsTrigger><TabsTrigger value="prepay"><TrendingDown size={16}/>Prepay</TabsTrigger><TabsTrigger value="rules"><FileCheck2 size={16}/>Rules</TabsTrigger></TabsList>
+    <header className="topbar"><div className="brand-mark"><ShieldCheck size={22}/></div><div><p>INDEPENDENT LOAN AUDITOR</p><h1>Loan Truth Checker</h1></div><span className="private">Local calculation</span></header>
+    <section className="intro"><div><span className="eyebrow">INDEPENDENT LOAN-COST & QUOTATION AUDIT</span><h2>Every rupee, accounted for.</h2><p>Reveal the true cost, missing disclosures and signing risk before accepting a vehicle loan.</p></div><div className="trust"><BadgeCheck size={18}/><span>Rules snapshot<br/><strong>29 Aug 2026</strong></span></div></section>
+    <Tabs defaultValue="truth" className="workspace">
+      <TabsList className="tab-list"><TabsTrigger value="truth"><ShieldCheck size={16}/>Truth audit</TabsTrigger><TabsTrigger value="calculate"><Calculator size={16}/>Calculate</TabsTrigger><TabsTrigger value="compare"><Scale size={16}/>Compare</TabsTrigger><TabsTrigger value="scan"><ScanLine size={16}/>Scan KFS</TabsTrigger><TabsTrigger value="gate"><ShieldEllipsis size={16}/>Approval gate</TabsTrigger><TabsTrigger value="audit"><SearchCheck size={16}/>Check quote</TabsTrigger><TabsTrigger value="prepay"><TrendingDown size={16}/>Prepay</TabsTrigger><TabsTrigger value="toolkit"><Wrench size={16}/>Toolkit</TabsTrigger><TabsTrigger value="rules"><FileCheck2 size={16}/>Rules</TabsTrigger></TabsList>
+
+      <TabsContent value="truth" className="panel truth-panel"><TruthAudit/></TabsContent>
 
       <TabsContent value="calculate" className="panel">
         <div className="panel-heading"><div><span>01</span><h3>EMI calculator</h3></div><p>Flat, monthly rest and annual rest</p></div>
         <div className="form-grid three"><Field label="Loan amount" value={principal} onChange={setPrincipal} suffix="₹"/><Field label="Annual interest rate" value={rate} onChange={setRate} suffix="% p.a."/><Field label="Tenure" value={months} onChange={setMonths} suffix="months"/></div>
         <div className="option-block"><Label>Interest method</Label><div className="choice-grid two"><Choice active={method==="reducing"} onClick={()=>setMethod("reducing")} recommended>Reducing balance</Choice><Choice active={method==="flat"} onClick={()=>setMethod("flat")}>Flat rate</Choice></div></div>
-        {method==="reducing"&&<div className="option-block"><Label>Interest rest period</Label><div className="choice-grid two"><Choice active={rest==="monthly"} onClick={()=>setRest("monthly")} recommended>Monthly rest — Sundaram car-loan method</Choice><Choice active={rest==="annual"} onClick={()=>setRest("annual")}>Annual rest — comparison estimate</Choice></div></div>}
+        {method==="reducing"&&<div className="option-block"><Label>Interest rest period</Label><div className="choice-grid two"><Choice active={rest==="monthly"} onClick={()=>setRest("monthly")} recommended>Monthly Reducing Balance EMI</Choice><Choice active={rest==="annual"} onClick={()=>setRest("annual")}>Annual rest — comparison estimate</Choice></div><p className="fine-print">Compare this calculation with the method stated in your lender&apos;s KFS or sanction letter.</p></div>}
         {method==="reducing"&&rest==="annual"&&<><div className="option-block"><Label>Payment frequency</Label><div className="choice-grid two"><Choice active={payFrequency==="monthly"} onClick={()=>setPayFrequency("monthly")}>Monthly payments</Choice><Choice active={payFrequency==="annual"} onClick={()=>setPayFrequency("annual")}>One annual payment</Choice></div></div><div className="notice"><AlertTriangle size={17}/><p>Annual-rest contracts differ. This estimate recalculates principal once each year. Confirm the lender’s KFS formula.</p></div></>}
         <div className="result-hero"><span>{base.isAnnualRest&&payFrequency==="annual"?"Estimated annual instalment":"Estimated monthly EMI"}</span><strong>{money2(base.displayPayment)}</strong><small>{method==="flat"?"Interest remains based on original principal":rest==="monthly"?"Outstanding principal recalculated every month":"Outstanding principal recalculated yearly"}</small></div>
         <div className="metrics"><Metric label="Principal" value={money(base.p)}/><Metric label="Total interest" value={money(base.interest)} tone="warn"/><Metric label="Total repayment" value={money(base.total)}/></div>
@@ -184,7 +186,7 @@ export default function Home() {
 
       <TabsContent value="compare" className="panel">
         <div className="panel-heading"><div><span>02</span><h3>Method comparison</h3></div><p>Same loan, three different workings</p></div>
-        <div className="comparison-grid">{comparisons.map((x,i)=><article className={i===0?"best":""} key={x.label}><div className="compare-title">{i===0&&<BadgeCheck size={17}/>}<h4>{x.label}</h4>{i===0&&<small>Sundaram method</small>}</div><strong>{money2(x.payment)}<small>/month</small></strong><dl><div><dt>Total interest</dt><dd>{money(x.interest)}</dd></div><div><dt>Total repayment</dt><dd>{money(x.total)}</dd></div><div><dt>Extra vs cheapest</dt><dd>{money(x.interest-cheapestInterest)}</dd></div></dl><div className="bar"><i style={{width:(x.total/maxTotal*100)+"%"}}/></div></article>)}</div>
+        <div className="comparison-grid">{comparisons.map((x,i)=><article className={i===0?"best":""} key={x.label}><div className="compare-title">{i===0&&<BadgeCheck size={17}/>}<h4>{x.label}</h4>{i===0&&<small>Baseline</small>}</div><strong>{money2(x.payment)}<small>/month</small></strong><dl><div><dt>Total interest</dt><dd>{money(x.interest)}</dd></div><div><dt>Total repayment</dt><dd>{money(x.total)}</dd></div><div><dt>Extra vs cheapest</dt><dd>{money(x.interest-cheapestInterest)}</dd></div></dl><div className="bar"><i style={{width:(x.total/maxTotal*100)+"%"}}/></div></article>)}</div>
         <div className="saving-card"><IndianRupee/><div><span>SAVING WITH MONTHLY REST VS FLAT</span><strong>{money(comparisons[2].interest-comparisons[0].interest)}</strong><p>{((comparisons[2].interest-comparisons[0].interest)/Math.max(1,comparisons[2].interest)*100).toFixed(1)}% less interest</p></div></div>
         <div className="difference-table"><div><span>Comparison</span><b>EMI difference</b><b>Interest difference</b><b>Total difference</b></div>{comparisons.slice(1).map(x=><div key={x.label}><span>{x.label} vs monthly rest</span><b>{money(x.payment-comparisons[0].payment)}</b><b>{money(x.interest-comparisons[0].interest)}</b><b>{money(x.total-comparisons[0].total)}</b></div>)}</div>
         <div className="action-row"><Button onClick={share}><Share2 size={16}/>Share summary</Button><Button variant="outline" onClick={()=>window.print()}><Printer size={16}/>Save as PDF</Button></div>
@@ -215,16 +217,18 @@ export default function Home() {
         <div className="form-grid"><Field label="Payment after EMI number" value={prepayMonth} onChange={setPrepayMonth} suffix="month"/><Field label="Extra principal payment" value={prepayAmount} onChange={setPrepayAmount} suffix="₹"/><Field label="Prepayment charge" value={chargeRate} onChange={setChargeRate} suffix="%"/><Field label="GST on charge" value={chargeGst} onChange={setChargeGst} suffix="%"/></div>
         <div className="subhead">Part-payment result</div><div className="metrics audit-metrics"><Metric label="Balance at selected month" value={money(prepay.balance)}/><Metric label="New principal balance" value={money(prepay.newBalance)}/><Metric label="Charge including GST" value={money(prepay.charge)} tone="warn"/><Metric label="Interest saved" value={money(prepay.interestSaved)} tone="good"/><Metric label="Months saved" value={String(prepay.monthsSaved)}/><Metric label="Net benefit after charge" value={money(prepay.netBenefit)} tone={prepay.netBenefit>=0?"good":"warn"}/></div>
         <div className="subhead">Full closure result</div><div className="closure-card"><div><span>Estimated settlement amount</span><strong>{money(prepay.settlement)}</strong></div><div><span>Future interest avoided</span><strong>{money(prepay.closureInterestSaved)}</strong></div><div><span>Net benefit after closure charge</span><strong>{money(prepay.closureNet)}</strong></div></div>
-        <p className="fine-print">Uses monthly-rest reducing schedule and entered charge rates. Obtain Sundaram’s dated settlement statement before paying.</p>
+        <p className="fine-print">Uses the monthly reducing schedule and the charge entered above. Obtain the lender&apos;s dated settlement statement and verify regulatory applicability before paying.</p>
       </TabsContent>
+
+      <TabsContent value="toolkit" className="panel"><AuditToolkit/></TabsContent>
 
       <TabsContent value="rules" className="panel">
         <div className="panel-heading"><div><span>07</span><h3>Signing checklist</h3></div><p>Evidence required before disbursement</p></div>
-        <div className="rule-card featured"><ShieldCheck/><div><span>CONFIRMED SUNDARAM METHOD</span><h4>Outstanding principal at monthly rests</h4><p>Sundaram’s published car-loan terms apply Customer IRR to outstanding principal at monthly rests.</p></div></div>
-        <div className="rule-grid"><article><span>RBI KFS</span><h4>Complete price label</h4><p>Annual rate, APR, EMI, charges and amortisation schedule.</p></article><article><span>RATE RANGE</span><h4>7%–20% indicative</h4><p>A stated 6.5% requires written clarification.</p></article><article><span>UNLISTED FEES</span><h4>Consent required</h4><p>An undisclosed fee cannot be added later without explicit consent.</p></article><article><span>THIRD-PARTY COSTS</span><h4>Collect receipts</h4><p>Insurance and similar charges must be separately disclosed.</p></article></div>
+        <div className="rule-card featured"><ShieldCheck/><div><span>🟢 IN FORCE · RBI KFS</span><h4>Complete loan-cost disclosure</h4><p>Verify annual rate, APR, EMI, charges, net disbursement and the amortisation schedule in the lender&apos;s written KFS.</p></div></div>
+        <div className="rule-grid"><article><span>🟢 IN FORCE</span><h4>KFS disclosure</h4><p>Retail term-loan figures must be capable of independent verification.</p></article><article><span>🟢 IN FORCE</span><h4>Prepayment directions</h4><p>Applicability depends on date, rate type, borrower, purpose and lender category.</p></article><article><span>⚪ LENDER POLICY</span><h4>Contractual fees</h4><p>A lender&apos;s fee schedule is not itself an RBI regulation.</p></article><article><span>🔵 GUIDANCE</span><h4>Collect evidence</h4><p>Keep the KFS, sanction letter, agreement, schedule, receipts and insurance invoice.</p></article></div>
         <div className="checklist"><h4>Check before signing</h4>{["Official sanction letter","Key Facts Statement (KFS)","Customer IRR / annualised interest rate","Flat or reducing method stated","Monthly/annual rest period stated","APR computation sheet","Exact EMI and number of instalments","Total interest and total repayment","Complete amortisation schedule","Processing/documentation fees with GST","Insurance and third-party receipts","Advance EMI and broken-period interest","Part-payment and foreclosure terms"].map((item,i)=><label key={item}><input type="checkbox"/><span>{String(i+1).padStart(2,"0")}</span>{item}</label>)}</div>
-        <div className="sources"><h4>Official references</h4><a href="https://www.sundaramfinance.in/assets/app_docs/termsandconditions.pdf" target="_blank" rel="noreferrer">Sundaram Finance — Loan terms</a><a href="https://sundaramfinance.in/fair-practices-code" target="_blank" rel="noreferrer">Sundaram Finance — Fair Practices Code and rates</a><a href="https://www.rbi.org.in/Scripts/BS_ViewMasDirections.aspx?id=12550" target="_blank" rel="noreferrer">Reserve Bank of India — KFS rules</a></div>
-        <p className="fine-print">Independent personal calculator—not an official Sundaram Finance or RBI application. Verify the latest written documents.</p>
+        <div className="sources"><h4>Official references</h4><a href="https://www.rbi.org.in/Scripts/BS_ViewMasDirections.aspx?id=12550" target="_blank" rel="noreferrer">Reserve Bank of India — KFS rules</a><a href="https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12888&Mode=0" target="_blank" rel="noreferrer">Reserve Bank of India — Pre-payment Charges Directions, 2025</a></div>
+        <p className="fine-print">Independent tool. Not affiliated with or endorsed by RBI, Sundaram Finance, or any lender. Loan figures entered here are calculated in your browser and are not uploaded by this tool. The website itself is publicly accessible.</p>
       </TabsContent>
     </Tabs>
   </main>;

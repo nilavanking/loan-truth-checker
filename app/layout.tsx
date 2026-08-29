@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Loan Truth Checker",
-  description: "Calculate EMI, reverse-engineer loan quotations and check RBI KFS disclosures.",
+  description: "Independent loan-cost audit tool for EMI, true APR, KFS disclosures, prepayment terms and signing risk.",
   applicationName: "Loan Truth Checker",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
 };

@@ -48,7 +48,8 @@ function impliedRate(principal: number, emi: number, months: number) {
   let low = 0, high = 100;
   for (let index = 0; index < 100; index += 1) {
     const mid = (low + high) / 2;
-    reducingEmi(principal, mid, months) < emi ? low = mid : high = mid;
+    if (reducingEmi(principal, mid, months) < emi) low = mid;
+    else high = mid;
   }
   return (low + high) / 2;
 }
