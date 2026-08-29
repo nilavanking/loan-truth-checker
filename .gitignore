@@ -33,6 +33,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# netlify local state
+.netlify
+
 # typescript
 next-env.d.ts
 /dist/
