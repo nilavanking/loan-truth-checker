@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "Loan Truth Checker",
   description: "Independent loan-cost audit tool for EMI, true APR, KFS disclosures, prepayment terms and signing risk.",
   applicationName: "Loan Truth Checker",
-  icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+  icons: { icon: "/loan-truth-checker-logo.png", shortcut: "/loan-truth-checker-logo.png", apple: "/loan-truth-checker-logo.png" },
 };
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#102c2b" };
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Image from "next/image";
 import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, ShieldEllipsis, TrendingDown, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -163,7 +164,7 @@ export default function Home() {
   const scheduleIsYearly=base.isAnnualRest||scheduleView==="yearly";
 
   return <main>
-    <header className="topbar"><div className="brand-mark"><ShieldCheck size={22}/></div><div><p>INDEPENDENT LOAN AUDITOR</p><h1>Loan Truth Checker</h1></div><span className="private">Local calculation</span></header>
+    <header className="topbar"><div className="brand-mark"><Image className="brand-logo" src="/loan-truth-checker-logo.png" alt="Loan Truth Checker logo" width={52} height={52} priority/></div><div><p>INDEPENDENT LOAN AUDITOR</p><h1>Loan Truth Checker</h1></div><span className="private">Local calculation</span></header>
     <section className="intro"><div><span className="eyebrow">INDEPENDENT LOAN-COST & QUOTATION AUDIT</span><h2>Every rupee, accounted for.</h2><p>Reveal the true cost, missing disclosures and signing risk before accepting a vehicle loan.</p></div><div className="trust"><BadgeCheck size={18}/><span>Rules snapshot<br/><strong>29 Aug 2026</strong></span></div></section>
     <Tabs defaultValue="truth" className="workspace">
       <TabsList className="tab-list"><TabsTrigger value="truth"><ShieldCheck size={16}/>Truth audit</TabsTrigger><TabsTrigger value="calculate"><Calculator size={16}/>Calculate</TabsTrigger><TabsTrigger value="compare"><Scale size={16}/>Compare</TabsTrigger><TabsTrigger value="scan"><ScanLine size={16}/>Scan KFS</TabsTrigger><TabsTrigger value="gate"><ShieldEllipsis size={16}/>Approval gate</TabsTrigger><TabsTrigger value="audit"><SearchCheck size={16}/>Check quote</TabsTrigger><TabsTrigger value="prepay"><TrendingDown size={16}/>Prepay</TabsTrigger><TabsTrigger value="toolkit"><Wrench size={16}/>Toolkit</TabsTrigger><TabsTrigger value="rules"><FileCheck2 size={16}/>Rules</TabsTrigger></TabsList>
