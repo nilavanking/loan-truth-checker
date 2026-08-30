@@ -16,6 +16,10 @@ Independent vehicle-loan audit and multi-financier comparison tool. It helps a b
 - Actual-offer and normalized comparison modes
 - Cost, transparency, flexibility and overall-loan awards
 - Negotiation suggestions derived only from entered quotations
+- Dated cash-flow IRR/XIRR, advance-EMI and broken-period models
+- Two-option part-prepayment and settlement-date foreclosure estimates
+- Separate Truth Score and Evidence Confidence
+- Installable offline-capable PWA
 
 Loan figures are calculated locally in the browser. The application is an independent educational and audit tool and is not affiliated with or endorsed by RBI, any bank, NBFC or lender.
 
@@ -32,10 +36,15 @@ npm run dev
 
 ```bash
 npm run lint
+npm run typecheck
 npm test
+npm run test:regulatory
+npm run build:netlify
 ```
 
-The test suite covers standard reducing loans, flat-rate normalization, fees deducted or financed, insurance bundling, inconsistent lender figures, missing disclosures, different amounts and tenures, and multi-offer rankings.
+The test suite covers standard reducing loans, flat-rate normalization, IRR/XIRR, fee treatments, advance EMI, broken-period interest, prepayment, foreclosure, floating resets, insurance bundling, inconsistent lender figures, missing disclosures, different amounts and tenures, multi-offer rankings and RBI source metadata.
+
+Financial formulas live in `loan-engine/`. UI modules should consume this shared engine instead of introducing screen-specific EMI, APR or settlement formulas.
 
 ## Netlify
 

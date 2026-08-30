@@ -1,6 +1,20 @@
+import {
+  addMonths,
+  buildRegularCashFlows,
+  flatEmi,
+  prepaymentOptions,
+  reducingEmi,
+  solveApr,
+  solveReducingRate,
+  xirr,
+} from "@/loan-engine";
+import type { CashFlow } from "@/loan-engine";
+import type { RateType as EngineRateType } from "@/loan-engine";
+import { REGULATORY_SOURCES } from "@/lib/regulatory-sources";
+
 export type InterestMethod = "reducing" | "flat";
-export type RateType = "fixed" | "floating" | "hybrid" | "unknown";
-export type ChargeTreatment = "financed" | "deducted" | "upfront" | "not-applicable";
+export type RateType = EngineRateType;
+export type ChargeTreatment = "financed" | "deducted" | "upfront" | "not-applicable" | "unknown";
 export type KfsStatus = "present" | "unclear" | "missing" | "conflicting";
 export type Severity = "pass" | "information" | "verify" | "warning" | "stop";
 
@@ -29,6 +43,10 @@ export type LoanAuditInput = {
   lenderTotalRepayment?: number;
   charges: ChargeInput[];
   kfs: KfsItem[];
+  disbursementDate?: string;
+  firstPaymentDate?: string;
+  cashFlows?: CashFlow[];
+  advanceEmiTreatment?: "first-emi-deducted" | "first-emi-upfront" | "additional-charge" | "unknown";
 };
 
 export type Finding = {
@@ -41,56 +59,23 @@ export type Finding = {
 
 export const KFS_TEMPLATE: Omit<KfsItem, "status">[] = [
   ["borrowerName", "Borrower name", true], ["loanAmount", "Loan / sanctioned amount", true],
+  ["proposalReference", "Proposal / account reference", false],
   ["netDisbursement", "Net disbursement", true], ["interestRate", "Interest rate", true],
   ["rateType", "Fixed / floating / hybrid", true], ["interestMethod", "Interest calculation method", true],
   ["tenure", "Loan tenure", true], ["emi", "EMI", true], ["instalments", "Number of instalments", true],
-  ["apr", "APR", true], ["processingFee", "Processing fee", true], ["documentation", "Documentation charges", false],
+  ["apr", "APR", true], ["aprSheet", "APR calculation sheet", true], ["processingFee", "Processing fee", true], ["documentation", "Documentation charges", false],
   ["insurance", "Insurance treatment", false], ["thirdParty", "Third-party charges", false],
   ["taxes", "GST / taxes", false], ["otherFees", "Other fees", false],
-  ["schedule", "Amortisation schedule", true], ["totalRepayment", "Total repayment", true],
+  ["schedule", "Amortisation schedule", true], ["totalInterest", "Total interest", true], ["totalRepayment", "Total repayment", true],
   ["prepayment", "Part-prepayment conditions", true], ["foreclosure", "Foreclosure conditions", true],
   ["penal", "Penal charges", true], ["latePayment", "Late-payment charges", false],
   ["issueDate", "KFS issue date", true], ["validity", "KFS validity period", false],
+  ["acknowledgement", "Borrower acknowledgement", false], ["thirdPartyReceipts", "Third-party receipts", false],
 ].map(([key, label, critical]) => ({ key: String(key), label: String(label), critical: Boolean(critical) }));
 
 export const DEFAULT_KFS: KfsItem[] = KFS_TEMPLATE.map((item) => ({ ...item, status: "missing" }));
 
-export function reducingEmi(principal: number, annualRate: number, months: number) {
-  if (principal <= 0 || months <= 0) return 0;
-  const monthly = annualRate / 1200;
-  if (!monthly) return principal / months;
-  const growth = (1 + monthly) ** months;
-  return principal * monthly * growth / (growth - 1);
-}
-
-export function flatEmi(principal: number, annualRate: number, months: number) {
-  if (principal <= 0 || months <= 0) return 0;
-  return (principal + principal * annualRate / 100 * months / 12) / months;
-}
-
-export function solveReducingRate(principal: number, payment: number, months: number) {
-  if (principal <= 0 || payment <= 0 || months <= 0 || payment * months <= principal) return 0;
-  let low = 0, high = 500;
-  for (let index = 0; index < 140; index += 1) {
-    const mid = (low + high) / 2;
-    if (reducingEmi(principal, mid, months) < payment) low = mid; else high = mid;
-  }
-  return (low + high) / 2;
-}
-
-export function solveApr(netProceeds: number, payments: number[]) {
-  if (netProceeds <= 0 || !payments.length || payments.reduce((sum, value) => sum + value, 0) <= netProceeds) {
-    return { nominalApr: 0, effectiveAnnualRate: 0, monthlyRate: 0 };
-  }
-  const pv = (monthlyRate: number) => payments.reduce((sum, payment, index) => sum + payment / (1 + monthlyRate) ** (index + 1), 0);
-  let low = 0, high = 5;
-  for (let index = 0; index < 180; index += 1) {
-    const mid = (low + high) / 2;
-    if (pv(mid) > netProceeds) low = mid; else high = mid;
-  }
-  const monthlyRate = (low + high) / 2;
-  return { monthlyRate, nominalApr: monthlyRate * 1200, effectiveAnnualRate: ((1 + monthlyRate) ** 12 - 1) * 100 };
-}
+export { reducingEmi, flatEmi, solveReducingRate, solveApr };
 
 function moneyRound(value: number) { return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100; }
 function closeEnough(actual: number | undefined, expected: number, tolerance: number) {
@@ -99,20 +84,34 @@ function closeEnough(actual: number | undefined, expected: number, tolerance: nu
 
 export function auditLoan(input: LoanAuditInput) {
   const months = Math.max(1, Math.round(input.months));
-  const financedCharges = input.charges.filter((item) => item.treatment === "financed").reduce((sum, item) => sum + item.amount, 0);
-  const deductedCharges = input.charges.filter((item) => item.treatment === "deducted").reduce((sum, item) => sum + item.amount, 0);
-  const upfrontCharges = input.charges.filter((item) => item.treatment === "upfront").reduce((sum, item) => sum + item.amount, 0);
-  const allCharges = input.charges.filter((item) => item.treatment !== "not-applicable").reduce((sum, item) => sum + item.amount, 0);
+  const advanceEmi = input.charges.find((item) => item.key === "advanceEmi");
+  const advanceCountsAsInstalment = input.advanceEmiTreatment === "first-emi-deducted" || input.advanceEmiTreatment === "first-emi-upfront";
+  const feeCharges = advanceCountsAsInstalment ? input.charges.filter((item) => item.key !== "advanceEmi") : input.charges;
+  const unknownCharges = feeCharges.filter((item) => item.treatment === "unknown");
+  const financedCharges = feeCharges.filter((item) => item.treatment === "financed").reduce((sum, item) => sum + item.amount, 0);
+  const deductedCharges = feeCharges.filter((item) => item.treatment === "deducted").reduce((sum, item) => sum + item.amount, 0) + (input.advanceEmiTreatment === "first-emi-deducted" ? advanceEmi?.amount || 0 : 0);
+  const upfrontCharges = feeCharges.filter((item) => item.treatment === "upfront").reduce((sum, item) => sum + item.amount, 0);
+  const allCharges = feeCharges.filter((item) => !["not-applicable", "unknown"].includes(item.treatment)).reduce((sum, item) => sum + item.amount, 0);
   const grossSanctioned = input.baseLoanAmount + financedCharges;
   const derivedNetAvailable = Math.max(0, input.baseLoanAmount - deductedCharges);
   const netAvailable = input.lenderNetDisbursement && input.lenderNetDisbursement > 0 ? input.lenderNetDisbursement : derivedNetAvailable;
   const effectiveProceeds = Math.max(0, netAvailable - upfrontCharges);
   const calculatedEmi = input.method === "flat" ? flatEmi(grossSanctioned, input.annualRate, months) : reducingEmi(grossSanctioned, input.annualRate, months);
-  const totalEmiPayments = calculatedEmi * months;
+  const remainingInstalments = advanceCountsAsInstalment ? Math.max(0, months - 1) : months;
+  const advancePayment = advanceCountsAsInstalment ? advanceEmi?.amount || calculatedEmi : 0;
+  const totalEmiPayments = calculatedEmi * remainingInstalments + advancePayment;
   const totalInterest = totalEmiPayments - grossSanctioned;
   const totalRepayment = totalEmiPayments + upfrontCharges;
   const trueBorrowingCost = totalEmiPayments - effectiveProceeds;
-  const apr = solveApr(effectiveProceeds, Array(months).fill(calculatedEmi));
+  const aprProceeds = input.advanceEmiTreatment === "first-emi-upfront" ? Math.max(0, effectiveProceeds - advancePayment) : effectiveProceeds;
+  const apr = solveApr(aprProceeds, Array(remainingInstalments).fill(calculatedEmi));
+  const disbursementDate = input.disbursementDate || "2026-01-01";
+  const remainingFirstPaymentDate = input.firstPaymentDate || (advanceCountsAsInstalment ? addMonths(new Date(`${disbursementDate}T00:00:00Z`), 2).toISOString().slice(0, 10) : undefined);
+  const regularFlows = buildRegularCashFlows(netAvailable, calculatedEmi, remainingInstalments, disbursementDate, remainingFirstPaymentDate);
+  if (upfrontCharges > 0) regularFlows.push({ date: input.disbursementDate || "2026-01-01", amount: upfrontCharges, direction: "borrower-pays", type: "fee", description: "Upfront charges", state: "derived" });
+  if (input.advanceEmiTreatment === "first-emi-upfront" && advancePayment > 0) regularFlows.push({ date: input.disbursementDate || "2026-01-01", amount: advancePayment, direction: "borrower-pays", type: "advance-emi", description: "First EMI paid in advance", state: "derived" });
+  const cashFlows = input.cashFlows?.length ? input.cashFlows : regularFlows;
+  const xirrRate = xirr(cashFlows);
   const equivalentReducingRate = input.method === "flat" ? solveReducingRate(grossSanctioned, calculatedEmi, months) : input.annualRate;
   const sameNumberReducingEmi = reducingEmi(grossSanctioned, input.annualRate, months);
   const sameNumberReducingTotal = sameNumberReducingEmi * months;
@@ -140,13 +139,15 @@ export function auditLoan(input: LoanAuditInput) {
   if (interestMatch === false) findings.push({ severity: "stop", title: "Disclosed interest mismatch", detail: "The disclosed interest does not reconcile with total instalments minus gross principal.", why: "Total interest should be reproducible from the payment schedule.", ask: "Please provide a corrected total-interest figure." });
   if (aprMatch === false) findings.push({ severity: "stop", title: "APR mismatch", detail: `Lender APR ${input.lenderApr?.toFixed(2)}%; independently calculated APR ${apr.nominalApr.toFixed(2)}%.`, why: "APR must reflect the loan's actual cash flows and compulsory charges.", ask: "Please provide the lender APR formula and corrected KFS." });
   if (netDisbursementMatch === false) findings.push({ severity: "warning", title: "Net disbursement does not reconcile", detail: `Lender net disbursement ₹${moneyRound(input.lenderNetDisbursement || 0).toLocaleString("en-IN")}; itemised calculation ₹${moneyRound(derivedNetAvailable).toLocaleString("en-IN")}.`, why: "The sanctioned amount minus disclosed deductions should reproduce the amount actually made available.", ask: "Please provide an itemised disbursement statement explaining the difference." });
+  if (unknownCharges.some((item) => item.amount > 0)) findings.push({ severity: "verify", title: "Charge treatment is unknown", detail: unknownCharges.filter((item) => item.amount > 0).map((item) => item.label).join(", "), why: "A charge cannot be applied reliably to principal, disbursement or APR until it is classified as financed, deducted, paid upfront, or not applicable.", ask: "Please confirm how each listed charge is collected." });
+  if ((advanceEmi?.amount || 0) > 0 && (!input.advanceEmiTreatment || input.advanceEmiTreatment === "unknown")) findings.push({ severity: "verify", title: "Advance EMI meaning is unknown", detail: "The amount could be the first instalment, a disbursement deduction, a separately paid instalment, or an additional charge.", why: "Treating an advance EMI incorrectly can double-count a payment and distort APR.", ask: "Please confirm whether the advance EMI counts as one of the disclosed instalments and how it is collected." });
   if (kfsConflicting.length) findings.push({ severity: "stop", title: "KFS contains conflicting information", detail: kfsConflicting.map((item) => item.label).join(", "), why: "Conflicting written terms prevent a safe signing decision.", ask: "Please issue one corrected KFS with consistent figures." });
   if (criticalMissing.length) findings.push({ severity: "warning", title: "Critical KFS information is not verified", detail: criticalMissing.map((item) => item.label).join(", "), why: "The signing decision cannot be based only on the EMI; cost, remedies and conditions must also be disclosed.", ask: `Please provide: ${criticalMissing.map((item) => item.label).join(", ")}.` });
 
   const componentScores = {
     mathematicalConsistency: emiMatch === true && repaymentMatch !== false && interestMatch !== false ? 10 : emiMatch === false || repaymentMatch === false || interestMatch === false ? 0 : 4,
     aprTransparency: input.kfs.find((item) => item.key === "apr")?.status === "present" && aprMatch !== false ? 10 : input.lenderApr ? 6 : 0,
-    feeTransparency: input.charges.every((item) => item.amount === 0 || item.treatment !== "not-applicable") ? 10 : 3,
+    feeTransparency: unknownCharges.some((item) => item.amount > 0) ? 0 : 10,
     kfsCompleteness: Math.round(kfsCompleteness / 10),
     methodClarity: input.kfs.find((item) => item.key === "interestMethod")?.status === "present" ? 10 : 0,
     prepaymentTransparency: input.kfs.find((item) => item.key === "prepayment")?.status === "present" ? 10 : 0,
@@ -156,17 +157,31 @@ export function auditLoan(input: LoanAuditInput) {
     totalRepaymentClarity: input.kfs.find((item) => item.key === "totalRepayment")?.status === "present" && repaymentMatch !== false ? 10 : 0,
   };
   const truthScore = Object.values(componentScores).reduce((sum, value) => sum + value, 0);
+  const evidenceChecks = [
+    input.baseLoanAmount > 0,
+    input.annualRate >= 0,
+    input.months > 0,
+    Boolean(input.method),
+    input.kfs.find((item) => item.key === "apr")?.status === "present",
+    input.kfs.find((item) => item.key === "netDisbursement")?.status === "present",
+    input.kfs.find((item) => item.key === "schedule")?.status === "present",
+    input.kfs.find((item) => item.key === "prepayment")?.status === "present",
+    input.kfs.find((item) => item.key === "penal")?.status === "present",
+    unknownCharges.length === 0,
+  ];
+  const evidenceConfidence = Math.round(evidenceChecks.filter(Boolean).length / evidenceChecks.length * 100);
   const hasStop = findings.some((item) => item.severity === "stop");
-  const decision = hasStop ? "do-not-sign" : criticalMissing.length || findings.some((item) => ["warning", "verify"].includes(item.severity)) ? "verify" : "ready";
+  const decision = hasStop ? "do-not-sign" : criticalMissing.length || unknownCharges.some((item) => item.amount > 0) || findings.some((item) => ["warning", "verify"].includes(item.severity)) ? "verify" : "ready";
 
   return {
     grossSanctioned, netAvailable, derivedNetAvailable, effectiveProceeds, financedCharges, deductedCharges, upfrontCharges,
     totalFees: allCharges, calculatedEmi, totalEmiPayments, totalInterest, totalRepayment, trueBorrowingCost,
     nominalRate: input.annualRate, apr: apr.nominalApr, effectiveAnnualRate: apr.effectiveAnnualRate,
+    xirrApr: xirrRate === null ? 0 : xirrRate * 100, cashFlows, advancePayment, remainingInstalments,
     equivalentReducingRate, sameNumberReducingEmi, sameNumberReducingTotal,
     flatExtraCost: input.method === "flat" ? totalEmiPayments - sameNumberReducingTotal : 0,
     emiMatch, repaymentMatch, interestMatch, aprMatch, netDisbursementMatch, kfsCompleteness, kfsMissing, criticalMissing,
-    findings, componentScores, truthScore, decision,
+    findings, componentScores, truthScore, evidenceConfidence, unknownCharges, decision,
   };
 }
 
@@ -194,42 +209,23 @@ export function determinePrepaymentRule(input: PrepaymentInput) {
 }
 
 export function prepaymentMath(principal: number, annualRate: number, months: number, afterPayments: number, partPayment: number, chargePercent = 0, fixedCharge = 0) {
-  const emi = reducingEmi(principal, annualRate, months);
-  const monthlyRate = annualRate / 1200;
-  const paid = Math.min(Math.max(0, Math.round(afterPayments)), months);
-  let scheduleBalance = principal;
-  let balance = principal;
-  let originalRemainingInterest = 0;
-  for (let month = 1; month <= months; month += 1) {
-    const interest = scheduleBalance * monthlyRate;
-    const principalPaid = month === months ? scheduleBalance : Math.min(scheduleBalance, emi - interest);
-    if (month > paid) originalRemainingInterest += interest;
-    scheduleBalance = Math.max(0, scheduleBalance - principalPaid);
-    if (month === paid) balance = scheduleBalance;
-  }
-  const payment = Math.min(balance, Math.max(0, partPayment));
-  const charge = payment * chargePercent / 100 + fixedCharge;
-  let newBalance = Math.max(0, balance - payment);
-  let remainingMonths = 0, remainingInterest = 0;
-  while (newBalance > 0.005 && remainingMonths < 1200) {
-    const interest = newBalance * monthlyRate;
-    const principalPaid = Math.min(newBalance, emi - interest);
-    if (principalPaid <= 0) { remainingMonths = Infinity; remainingInterest = Infinity; break; }
-    remainingInterest += interest; newBalance -= principalPaid; remainingMonths += 1;
-  }
-  const interestSaved = Number.isFinite(remainingInterest) ? Math.max(0, originalRemainingInterest - remainingInterest) : -Infinity;
-  const foreclosureCharge = balance * chargePercent / 100 + fixedCharge;
+  const options = prepaymentOptions(principal, annualRate, months, afterPayments, partPayment, chargePercent, fixedCharge);
+  const foreclosureCharge = options.balance * chargePercent / 100 + fixedCharge;
   return {
-    emi, balance, partPayment: payment, partPaymentCharge: charge, remainingMonths,
-    interestSaved, netPartPaymentBenefit: interestSaved - charge,
-    foreclosureSettlement: balance + foreclosureCharge,
-    foreclosureCharge, foreclosureInterestAvoided: originalRemainingInterest,
-    netForeclosureBenefit: originalRemainingInterest - foreclosureCharge,
+    emi: options.originalEmi,
+    balance: options.balance,
+    partPayment: options.partPayment,
+    partPaymentCharge: options.charge,
+    remainingMonths: options.keepEmi.months,
+    interestSaved: options.keepEmi.interestSaved,
+    netPartPaymentBenefit: options.keepEmi.netBenefit,
+    keepEmi: options.keepEmi,
+    keepTenure: options.keepTenure,
+    foreclosureSettlement: options.balance + foreclosureCharge,
+    foreclosureCharge,
+    foreclosureInterestAvoided: options.originalFutureInterest,
+    netForeclosureBenefit: options.originalFutureInterest - foreclosureCharge,
   };
 }
 
-export const RULES = [
-  { title: "Key Facts Statement for Loans & Advances", authority: "Reserve Bank of India", publicationDate: "15 Apr 2024", effectiveDate: "01 Oct 2024", status: "IN FORCE", source: "https://www.rbi.org.in/Scripts/BS_ViewMasDirections.aspx?id=12550", lastChecked: "29 Aug 2026", explanation: "Retail and MSME term-loan KFS disclosures include APR, charges and an amortisation schedule." },
-  { title: "Pre-payment Charges on Loans Directions, 2025", authority: "Reserve Bank of India", publicationDate: "02 Jul 2025", effectiveDate: "01 Jan 2026", status: "IN FORCE", source: "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12888&Mode=0", lastChecked: "29 Aug 2026", explanation: "Applicability depends on sanction/renewal date, rate type, borrower, purpose and regulated-entity category." },
-  { title: "Individual lender fees and foreclosure terms", authority: "The selected lender", publicationDate: "Varies", effectiveDate: "Contract-specific", status: "LENDER POLICY", source: "Use the lender's current KFS, sanction letter and agreement", lastChecked: "At signing", explanation: "A lender policy is not an RBI rule and must be checked against the applicable regulation and signed contract." },
-] as const;
+export const RULES = REGULATORY_SOURCES;

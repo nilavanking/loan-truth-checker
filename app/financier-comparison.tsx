@@ -17,7 +17,7 @@ const INR = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR",
 const money = (value: number) => INR.format(Number.isFinite(value) ? value : 0);
 const number = (value: string) => Math.max(0, Number(value.replace(/,/g, "")) || 0);
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-const initialQuotes = () => [createEmptyQuote("offer-1", 1), { ...createEmptyQuote("offer-2", 2), annualRate: 8.75 }];
+const initialQuotes = () => [createEmptyQuote("offer-1", 1), createEmptyQuote("offer-2", 2)];
 
 function NumberField({ label, value, suffix, onChange }: { label: string; value: number; suffix: string; onChange: (value: number) => void }) {
   return <div className="field"><Label>{label}</Label><div className="input-wrap"><Input inputMode="decimal" value={value || ""} onChange={(event) => onChange(number(event.target.value))}/><span>{suffix}</span></div></div>;
@@ -36,6 +36,7 @@ export function FinancierComparison() {
   const [normalAmount, setNormalAmount] = useState(600000);
   const [normalMonths, setNormalMonths] = useState(60);
   const [saved, setSaved] = useState("Saved locally in this browser");
+  const [saveLocally, setSaveLocally] = useState(true);
   const hydrated = useRef(false);
 
   useEffect(() => {
@@ -57,9 +58,10 @@ export function FinancierComparison() {
 
   useEffect(() => {
     if (!hydrated.current) return;
-    localStorage.setItem("loan-truth-checker:finance-offers-v1", JSON.stringify({ quotes, mode, amount: normalAmount, months: normalMonths }));
-    setSaved("Saved locally in this browser");
-  }, [quotes, mode, normalAmount, normalMonths]);
+    if (saveLocally) {
+      localStorage.setItem("loan-truth-checker:finance-offers-v1", JSON.stringify({ quotes, mode, amount: normalAmount, months: normalMonths }));
+    }
+  }, [quotes, mode, normalAmount, normalMonths, saveLocally]);
 
   const comparison = useMemo(() => compareFinanceQuotes(quotes, mode, { amount: normalAmount, months: normalMonths }), [quotes, mode, normalAmount, normalMonths]);
   const updateQuote = (id: string, patch: Partial<FinanceQuote>) => setQuotes((current) => current.map((quote) => quote.id === id ? { ...quote, ...patch } : quote));
@@ -68,7 +70,7 @@ export function FinancierComparison() {
   const addOffer = () => setQuotes((current) => current.length >= 5 ? current : [...current, createEmptyQuote(newId("offer"), current.length + 1)]);
   const duplicateOffer = (quote: FinanceQuote) => setQuotes((current) => current.length >= 5 ? current : [...current, { ...structuredClone(quote), id: newId("offer"), lenderName: `${quote.lenderName} copy`, charges: quote.charges.map((charge) => ({ ...charge, id: newId("charge") })) }]);
   const deleteOffer = (id: string) => setQuotes((current) => current.length <= 2 ? current : current.filter((quote) => quote.id !== id));
-  const addCustomCharge = (quote: FinanceQuote) => updateQuote(quote.id, { charges: [...quote.charges, { id: newId("charge"), key: newId("custom"), label: "Custom charge", amount: 0, treatment: "not-applicable", requirement: "unknown" }] });
+  const addCustomCharge = (quote: FinanceQuote) => updateQuote(quote.id, { charges: [...quote.charges, { id: newId("charge"), key: newId("custom"), label: "Custom charge", amount: 0, amountType: "fixed", percentage: 0, taxPercent: 0, treatment: "unknown", requirement: "unknown" }] });
   const removeCharge = (quote: FinanceQuote, id: string) => updateQuote(quote.id, { charges: quote.charges.filter((charge) => charge.id !== id) });
 
   const awardCards = [
@@ -79,6 +81,15 @@ export function FinancierComparison() {
     ["BEST OVERALL LOAN", comparison.awards.bestOverall],
   ] as const;
   const overallWinner = comparison.awards.bestOverall.length === 1 ? comparison.audits.find((item) => item.quote.id === comparison.awards.bestOverall[0]) : null;
+  const pairwiseDifferences = comparison.audits.flatMap((left, leftIndex) => comparison.audits.slice(leftIndex + 1).map((right) => ({
+    key: `${left.quote.id}-${right.quote.id}`,
+    left: left.quote.lenderName || "Unnamed offer",
+    right: right.quote.lenderName || "Unnamed offer",
+    emi: left.comparisonEmi - right.comparisonEmi,
+    repayment: left.totalRepayment - right.totalRepayment,
+    apr: left.trueApr - right.trueApr,
+    fees: left.totalCharges - right.totalCharges,
+  })));
   const overallDisadvantages = overallWinner ? [
     ...overallWinner.questions.slice(0, 3),
     ...(overallWinner.quote.method === "flat" ? ["The quote uses flat interest, so the headline rate understates its reducing-rate equivalent."] : []),
@@ -98,7 +109,7 @@ export function FinancierComparison() {
     ["Total repayment", (item) => money(item.totalRepayment)], ["True loan cost", (item) => money(item.totalLoanCost)],
     ["Cost per ₹1 lakh", (item) => money(item.costPerLakh)],
     ["Prepayment", (item) => item.prepaymentConfirmed ? item.prepayment.title : "Not confirmed"],
-    ["KFS completeness", (item) => `${item.kfsCompleteness}%`], ["Approval Gate", (item) => item.decisionLabel],
+    ["KFS completeness", (item) => `${item.kfsCompleteness}%`], ["Evidence confidence", (item) => `${item.evidenceConfidence}%`], ["Approval Gate", (item) => item.decisionLabel],
   ];
 
   return <section className="financier-workspace">
@@ -111,6 +122,8 @@ export function FinancierComparison() {
       <Button type="button" onClick={addOffer} disabled={quotes.length >= 5}><Plus/> Add Finance Offer</Button>
       <span>{quotes.length >= 5 ? "Maximum five offers reached" : "Add between two and five real quotations"}</span>
       <small>{saved}</small>
+      <label><input type="checkbox" checked={saveLocally} onChange={(event) => { const enabled = event.target.checked; setSaveLocally(enabled); if (!enabled) localStorage.removeItem("loan-truth-checker:finance-offers-v1"); setSaved(enabled ? "Saved locally in this browser" : "Local saving disabled; saved comparison cleared"); }}/> Save comparisons locally</label>
+      <Button type="button" variant="outline" onClick={() => { localStorage.removeItem("loan-truth-checker:finance-offers-v1"); setSaved("Saved comparison data cleared"); }}>Clear saved comparisons</Button>
     </div>
 
     <div className="offer-editor-grid">
@@ -155,11 +168,13 @@ export function FinancierComparison() {
           <div className="field"><Label>Optional notes</Label><textarea value={quote.notes} onChange={(event) => updateQuote(quote.id, { notes: event.target.value })}/></div>
 
           <details className="offer-subsection"><summary>Fees, insurance and deductions</summary><div className="charge-editor">
-            <div className="charge-editor-head"><span>Description</span><span>Amount</span><span>Treatment</span><span>Requirement</span><span/></div>
+            <div className="charge-editor-head"><span>Description</span><span>Amount / rate</span><span>Amount type</span><span>GST</span><span>Treatment</span><span>Requirement</span><span/></div>
             {quote.charges.map((charge, index) => <div className="quote-charge-row" key={charge.id}>
               <Input value={charge.label} onChange={(event) => updateCharge(quote.id, charge.id, { label: event.target.value })}/>
-              <Input inputMode="decimal" value={charge.amount || ""} onChange={(event) => updateCharge(quote.id, charge.id, { amount: number(event.target.value) })}/>
-              <select value={charge.treatment} onChange={(event) => updateCharge(quote.id, charge.id, { treatment: event.target.value as QuoteCharge["treatment"] })}><option value="not-applicable">Not applicable</option><option value="financed">Financed</option><option value="deducted">Deducted</option><option value="upfront">Paid upfront</option></select>
+              <Input inputMode="decimal" value={(charge.amountType === "percentage" ? charge.percentage : charge.amount) || ""} onChange={(event) => updateCharge(quote.id, charge.id, charge.amountType === "percentage" ? { percentage: number(event.target.value) } : { amount: number(event.target.value) })}/>
+              <select value={charge.amountType || "fixed"} onChange={(event) => updateCharge(quote.id, charge.id, { amountType: event.target.value as QuoteCharge["amountType"] })}><option value="fixed">Fixed ₹</option><option value="percentage">Percent %</option></select>
+              <Input aria-label={`${charge.label} GST percent`} inputMode="decimal" placeholder="GST %" value={charge.taxPercent || ""} onChange={(event) => updateCharge(quote.id, charge.id, { taxPercent: number(event.target.value) })}/>
+              <select value={charge.treatment} onChange={(event) => updateCharge(quote.id, charge.id, { treatment: event.target.value as QuoteCharge["treatment"] })}><option value="unknown">Unknown</option><option value="not-applicable">Not applicable</option><option value="financed">Financed</option><option value="deducted">Deducted</option><option value="upfront">Paid upfront</option></select>
               <select value={charge.requirement} onChange={(event) => updateCharge(quote.id, charge.id, { requirement: event.target.value as QuoteCharge["requirement"] })}><option value="unknown">Unknown</option><option value="mandatory">Mandatory</option><option value="optional">Optional</option></select>
               <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${charge.label}`} onClick={() => removeCharge(quote, charge.id)} disabled={index < 11}><Trash2/></Button>
             </div>)}
@@ -196,6 +211,11 @@ export function FinancierComparison() {
     <article className="comparison-table-card">
       <div className="comparison-title"><div><span>SIDE-BY-SIDE AUDIT</span><h2>Confirmed quote vs Truth Engine calculation</h2></div><p>Flat and reducing rates are not directly comparable by headline percentage.</p></div>
       <div className="comparison-scroll"><table className="financier-table"><thead><tr><th>Metric</th>{comparison.audits.map((item) => <th key={item.quote.id}>{item.quote.lenderName || "Unnamed offer"}</th>)}</tr></thead><tbody>{tableRows.map(([label, render]) => <tr key={label}><th>{label}</th>{comparison.audits.map((item) => <td key={item.quote.id}>{render(item)}</td>)}</tr>)}</tbody></table></div>
+    </article>
+
+    <article className="score-card">
+      <div className="comparison-title"><div><span>REAL DIFFERENCES</span><h2>What one offer changes in rupees</h2></div><p>Positive values mean the first named offer costs more; negative values mean it costs less.</p></div>
+      <div className="difference-grid">{pairwiseDifferences.map((pair) => <div key={pair.key}><strong>{pair.left} vs {pair.right}</strong><span>Monthly EMI: {money(pair.emi)}</span><span>Total repayment: {money(pair.repayment)}</span><span>APR: {pair.apr >= 0 ? "+" : ""}{pair.apr.toFixed(2)} percentage points</span><span>Charges: {money(pair.fees)}</span></div>)}</div>
     </article>
 
     <article className="score-card">

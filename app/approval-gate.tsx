@@ -17,10 +17,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AuditValues, emptyValues, money, numberValue, parseValues, reducingEmi } from "@/app/document-audit";
+import { AuditValues, emptyValues, money, numberValue, parseValues } from "@/app/document-audit";
+import { calculateEmi, solveReducingRate } from "@/loan-engine";
+import type { ChargeTreatment } from "@/loan-engine";
 
 type DocType = "promise" | "kfs" | "sanction" | "dealer" | "schedule" | "insurance" | "receipt";
-type EvidenceDoc = { id: string; type: DocType; name: string; values: AuditValues; extracted: boolean };
+type OcrConfidence = "high" | "medium" | "low";
+type EvidenceDoc = { id: string; type: DocType; name: string; values: AuditValues; extracted: boolean; confirmed: boolean; confidence: Partial<Record<keyof AuditValues, OcrConfidence>> };
 type Level = "green" | "amber" | "red";
 type GateFinding = { level: Level; title: string; detail: string; action?: string };
 
@@ -36,7 +39,7 @@ const labels: Record<DocType, string> = {
 
 const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const blankDoc = (type: DocType, name = labels[type], values: Partial<AuditValues> = {}): EvidenceDoc => ({
-  id: makeId(), type, name, extracted: false, values: { ...emptyValues, ...values },
+  id: makeId(), type, name, extracted: false, confirmed: false, confidence: {}, values: { ...emptyValues, ...values },
 });
 
 const defaultPromise = blankDoc("promise", "Oral offer — salesperson", {
@@ -44,14 +47,7 @@ const defaultPromise = blankDoc("promise", "Oral offer — salesperson", {
 });
 
 function impliedRate(principal: number, emi: number, months: number) {
-  if (!principal || !emi || !months || emi * months <= principal) return 0;
-  let low = 0, high = 100;
-  for (let index = 0; index < 100; index += 1) {
-    const mid = (low + high) / 2;
-    if (reducingEmi(principal, mid, months) < emi) low = mid;
-    else high = mid;
-  }
-  return (low + high) / 2;
+  return solveReducingRate(principal, emi, months);
 }
 
 async function extractText(file: File, onStatus: (message: string, progress: number) => void) {
@@ -119,13 +115,7 @@ export function ApprovalGate() {
   const [advanceEmi, setAdvanceEmi] = useState("0");
   const [brokenPeriod, setBrokenPeriod] = useState("0");
   const [otherDeduction, setOtherDeduction] = useState("0");
-  const [secondName, setSecondName] = useState("Other lender");
-  const [secondAmount, setSecondAmount] = useState("611000");
-  const [secondRate, setSecondRate] = useState("");
-  const [secondApr, setSecondApr] = useState("");
-  const [secondMonths, setSecondMonths] = useState("60");
-  const [secondEmi, setSecondEmi] = useState("");
-  const [secondCharges, setSecondCharges] = useState("0");
+  const [chargeTreatments, setChargeTreatments] = useState<Record<string, ChargeTreatment>>({ processingFee: "unknown", documentationFee: "unknown", insurance: "unknown", advanceEmi: "unknown", brokenPeriod: "unknown", otherDeduction: "unknown" });
 
   const updateDoc = (id: string, update: Partial<EvidenceDoc>) => setDocuments((current) => current.map((doc) => doc.id === id ? { ...doc, ...update } : doc));
   const updateValue = (id: string, field: keyof AuditValues, value: string) => setDocuments((current) => current.map((doc) => doc.id === id ? { ...doc, values: { ...doc.values, [field]: value } } : doc));
@@ -138,7 +128,8 @@ export function ApprovalGate() {
       if (text.trim().length < 20) throw new Error("No readable text found");
       const values = parseValues(text);
       const detected = Object.entries(values).filter(([key, value]) => !["method", "rest"].includes(key) && value).length;
-      setDocuments((current) => [...current, { id: makeId(), type: uploadType, name: file.name, values, extracted: true }]);
+      const confidence = Object.fromEntries(Object.entries(values).filter(([, value]) => value && value !== "unknown").map(([key]) => [key, "medium"])) as EvidenceDoc["confidence"];
+      setDocuments((current) => [...current, { id: makeId(), type: uploadType, name: file.name, values, extracted: true, confirmed: false, confidence }]);
       setProgress(100); setUploadStatus(`${labels[uploadType]} added with ${detected} detected figures. Expand it and check every number.`);
     } catch (error) {
       setUploadStatus(`${error instanceof Error ? error.message : "Reading failed"}. Add a manual evidence card instead.`);
@@ -160,15 +151,21 @@ export function ApprovalGate() {
 
   const primary = useMemo(() => {
     const values = evidence.authority?.values || emptyValues;
-    const principal = numberValue(values.loanAmount);
+    const basePrincipal = numberValue(values.loanAmount);
     const rate = numberValue(values.annualRate);
     const months = Math.round(numberValue(values.months));
-    const emi = numberValue(values.emi) || reducingEmi(principal, rate, months);
-    const charges = numberValue(values.processingFee) + numberValue(values.documentationFee) + numberValue(values.insurance) + numberValue(otherDeduction) + numberValue(brokenPeriod) + numberValue(advanceEmi);
-    const netDisbursal = principal - charges;
+    const amounts: Record<string, number> = { processingFee: numberValue(values.processingFee), documentationFee: numberValue(values.documentationFee), insurance: numberValue(values.insurance), advanceEmi: numberValue(advanceEmi), brokenPeriod: numberValue(brokenPeriod), otherDeduction: numberValue(otherDeduction) };
+    const sumTreatment = (treatment: ChargeTreatment) => Object.entries(amounts).filter(([key]) => chargeTreatments[key] === treatment).reduce((sum, [, amount]) => sum + amount, 0);
+    const financed = sumTreatment("financed"), deductions = sumTreatment("deducted"), upfront = sumTreatment("upfront");
+    const principal = basePrincipal + financed;
+    const method = values.method === "flat" || values.method === "reducing" ? values.method : null;
+    const calculatedEmi = method ? calculateEmi(principal, rate, months, method) : 0;
+    const emi = numberValue(values.emi) || calculatedEmi;
+    const charges = financed + deductions + upfront;
+    const netDisbursal = basePrincipal - deductions;
     const totalEmis = emi * months;
-    return { values, principal, rate, months, emi, charges, netDisbursal, totalEmis, totalCost: totalEmis + charges, implied: impliedRate(principal, emi, months) };
-  }, [advanceEmi, brokenPeriod, evidence.authority, otherDeduction]);
+    return { values, basePrincipal, principal, rate, months, method, emi, calculatedEmi, financed, deductions, upfront, charges, netDisbursal, totalEmis, totalCost: totalEmis + upfront, implied: impliedRate(principal, emi, months) };
+  }, [advanceEmi, brokenPeriod, chargeTreatments, evidence.authority, otherDeduction]);
 
   const findings = useMemo<GateFinding[]>(() => {
     const list: GateFinding[] = [];
@@ -178,6 +175,8 @@ export function ApprovalGate() {
     if (!schedule) list.push({ level: "amber", title: "Repayment schedule missing", detail: "Principal and interest distribution cannot be checked across all instalments.", action: "Request the complete amortisation schedule." });
 
     const core = [promise, kfs, sanction, schedule].filter(Boolean) as EvidenceDoc[];
+    const lowConfidenceFields = core.flatMap((doc) => Object.entries(doc.confidence).filter(([, confidence]) => confidence === "low").map(([field]) => `${labels[doc.type]}: ${field}`));
+    if (lowConfidenceFields.length) list.push({ level: "amber", title: "Low-confidence OCR fields", detail: lowConfidenceFields.join(" · "), action: "Check each value against the original document before relying on the result." });
     const compareField = (field: keyof AuditValues, name: string, tolerance: number, format: (value: number) => string) => {
       const entries = core.map((doc) => ({ doc, value: numberValue(String(doc.values[field])) })).filter((entry) => entry.value > 0);
       if (entries.length < 2) return;
@@ -194,6 +193,15 @@ export function ApprovalGate() {
     compareField("months", "Tenure", 0, (value) => `${value} months`);
     compareField("emi", "EMI", 5, money);
 
+    const kfsDoc = kfs;
+    if (kfsDoc) {
+      for (const [field, label] of [["processingFee", "Processing fee"], ["documentationFee", "Documentation fee"], ["insurance", "Insurance"]] as Array<[keyof AuditValues, string]>) {
+        const kfsAmount = numberValue(String(kfsDoc.values[field]));
+        const later = [sanction, evidence.byType("receipt")].filter(Boolean).map((doc) => ({ doc: doc!, amount: numberValue(String(doc!.values[field])) })).find((entry) => entry.amount > kfsAmount + 5);
+        if (later) list.push({ level: kfsDoc.confirmed && later.doc.confirmed ? "red" : "amber", title: "Charge not found in KFS", detail: `${label}: KFS ${money(kfsAmount)}; later ${labels[later.doc.type]} ${money(later.amount)}.`, action: `Ask why ${label.toLowerCase()} first appeared later and request the supporting receipt and corrected disclosure.` });
+      }
+    }
+
     if (promise && kfs) {
       const promised = numberValue(promise.values.annualRate), written = numberValue(kfs.values.annualRate);
       if (promised && written && Math.abs(promised - written) > 0.05) list.push({ level: "red", title: "Oral promise is not honoured", detail: `Promised ${promised}% but KFS states ${written}%.`, action: "Ask the salesperson to correct the KFS or withdraw the promise." });
@@ -205,9 +213,11 @@ export function ApprovalGate() {
     if (kfs && kfs.values.method === "reducing" && kfs.values.rest === "unknown") list.push({ level: "amber", title: "Rest frequency unclear", detail: "Monthly-rest and annual-rest reducing loans produce different costs.", action: "Confirm the rest period in the KFS." });
 
     if (primary.principal && primary.rate && primary.months && numberValue(primary.values.emi)) {
-      const calculated = reducingEmi(primary.principal, primary.rate, primary.months);
-      const difference = primary.emi - calculated;
-      if (Math.abs(difference) > 5) list.push({ level: "red", title: "Stated EMI fails the formula check", detail: `Stated ${money(primary.emi)}; monthly-rest calculation ${money(calculated)}; difference ${money(difference)} each month.`, action: "Ask for the lender’s formula and corrected schedule." });
+      if (primary.method) {
+        const calculated = calculateEmi(primary.principal, primary.rate, primary.months, primary.method);
+        const difference = primary.emi - calculated;
+        if (Math.abs(difference) > 5) list.push({ level: "red", title: "Stated EMI fails the formula check", detail: `Stated ${money(primary.emi)}; ${primary.method} calculation ${money(calculated)}; difference ${money(difference)} each month.`, action: "Ask for the lender’s formula and corrected schedule." });
+      }
     }
 
     const receipt = numberValue(actualDealerReceipt);
@@ -216,19 +226,18 @@ export function ApprovalGate() {
     if (balance && receipt && Math.abs(balance - receipt) > 100) list.push({ level: "amber", title: "Dealer balance and receipt differ", detail: `Invoice finance balance ${money(balance)}; dealer receipt ${money(receipt)}.`, action: "Confirm who paid or financed the difference." });
     if (!receipt) list.push({ level: "amber", title: "Actual dealer receipt not entered", detail: `Current calculated net disbursal is ${money(primary.netDisbursal)}.`, action: "Enter the lender’s actual amount paid to the dealer." });
     if (numberValue(primary.values.insurance) > 0 && !evidence.byType("insurance")) list.push({ level: "amber", title: "Insurance financed without invoice", detail: `${money(numberValue(primary.values.insurance))} appears in the loan figures, but no insurance invoice is attached.`, action: "Collect the policy and premium receipt." });
+    const unknownChargeNames = Object.entries(chargeTreatments).filter(([key, treatment]) => treatment === "unknown" && ({ processingFee: numberValue(primary.values.processingFee), documentationFee: numberValue(primary.values.documentationFee), insurance: numberValue(primary.values.insurance), advanceEmi: numberValue(advanceEmi), brokenPeriod: numberValue(brokenPeriod), otherDeduction: numberValue(otherDeduction) }[key] || 0) > 0).map(([key]) => key);
+    if (unknownChargeNames.length) list.push({ level: "amber", title: "Charge treatment not confirmed", detail: `${unknownChargeNames.join(", ")} cannot be safely applied to net disbursement or APR.`, action: "Classify each charge as financed, deducted, paid upfront, or not applicable from written evidence." });
 
     if (!list.some((finding) => finding.level === "red") && !list.some((finding) => finding.level === "amber")) list.push({ level: "green", title: "All approval gates passed", detail: "The supplied documents and calculations are mutually consistent within rounding tolerance." });
-    return list;
-  }, [actualDealerReceipt, dealerBalance, evidence, primary]);
+    const unconfirmedDocument = core.some((doc) => doc.type !== "promise" && !doc.confirmed);
+    const noConfirmedWrittenEvidence = !core.some((doc) => doc.type !== "promise" && doc.confirmed);
+    return unconfirmedDocument || noConfirmedWrittenEvidence
+      ? list.map((finding) => finding.level === "red" ? { ...finding, level: "amber" as const, detail: `${finding.detail} The written evidence is not yet user-confirmed against the original document.` } : finding)
+      : list;
+  }, [actualDealerReceipt, advanceEmi, brokenPeriod, chargeTreatments, dealerBalance, evidence, otherDeduction, primary]);
 
   const gate: Level = findings.some((finding) => finding.level === "red") ? "red" : findings.some((finding) => finding.level === "amber") ? "amber" : "green";
-
-  const second = useMemo(() => {
-    const principal = numberValue(secondAmount), rate = numberValue(secondRate), months = Math.round(numberValue(secondMonths));
-    const emi = numberValue(secondEmi) || reducingEmi(principal, rate, months);
-    const charges = numberValue(secondCharges), total = emi * months + charges;
-    return { principal, rate, months, emi, charges, total, apr: numberValue(secondApr) };
-  }, [secondAmount, secondApr, secondCharges, secondEmi, secondMonths, secondRate]);
 
   const report = useMemo(() => [
     "LOAN TRUTH CHECKER — FINAL APPROVAL GATE",
@@ -281,6 +290,8 @@ export function ApprovalGate() {
                 <MiniField label="Loan insurance" value={doc.values.insurance} suffix="₹" onChange={(value) => updateValue(doc.id, "insurance", value)}/>
               </div>
               <div className="method-edit-grid"><div className="field"><Label>Interest method</Label><select value={doc.values.method} onChange={(event) => updateValue(doc.id, "method", event.target.value)}><option value="unknown">Not stated</option><option value="reducing">Reducing</option><option value="flat">Flat</option></select></div><div className="field"><Label>Rest frequency</Label><select value={doc.values.rest} onChange={(event) => updateValue(doc.id, "rest", event.target.value)}><option value="unknown">Not stated</option><option value="monthly">Monthly</option><option value="annual">Annual</option></select></div></div>
+              {doc.extracted && <div className="method-edit-grid">{(["loanAmount", "annualRate", "apr", "months", "emi", "totalRepayment"] as const).filter((field) => doc.values[field]).map((field) => <div className="field" key={field}><Label>{field} OCR confidence</Label><select value={doc.confidence[field] || "medium"} onChange={(event) => updateDoc(doc.id, { confidence: { ...doc.confidence, [field]: event.target.value as OcrConfidence } })}><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></div>)}</div>}
+              <label className="confidence-note"><input type="checkbox" checked={doc.confirmed} onChange={(event) => updateDoc(doc.id, { confirmed: event.target.checked })}/><span> I checked these figures against the original document</span></label>
               {documents.length > 1 && <Button type="button" variant="outline" className="delete-evidence" onClick={() => setDocuments((current) => current.filter((item) => item.id !== doc.id))}><Trash2 size={16}/> Remove evidence</Button>}
             </div>
           </details>)}
@@ -289,11 +300,12 @@ export function ApprovalGate() {
 
       <div className="card reconciliation-card">
         <div className="section-kicker"><span>A</span> Money reconciliation</div><h2>Where did every rupee go?</h2><p className="section-copy">Match sanctioned finance, deductions and the amount actually received by the dealer.</p>
-        <div className="reconcile-equation"><div><span>Sanctioned loan</span><strong>{money(primary.principal)}</strong></div><b>−</b><div><span>Known deductions</span><strong>{money(primary.charges)}</strong></div><b>=</b><div className="net"><span>Calculated net</span><strong>{money(primary.netDisbursal)}</strong></div></div>
+        <div className="reconcile-equation"><div><span>Base loan</span><strong>{money(primary.basePrincipal)}</strong></div><b>−</b><div><span>Confirmed deductions</span><strong>{money(primary.deductions)}</strong></div><b>=</b><div className="net"><span>Calculated net</span><strong>{money(primary.netDisbursal)}</strong></div></div>
         <div className="form-grid two-cols gate-form"><MiniField label="Dealer invoice finance balance" value={dealerBalance} suffix="₹" onChange={setDealerBalance}/><MiniField label="Actual amount lender paid dealer" value={actualDealerReceipt} suffix="₹" onChange={setActualDealerReceipt}/><MiniField label="Advance EMI deducted" value={advanceEmi} suffix="₹" onChange={setAdvanceEmi}/><MiniField label="Broken-period interest" value={brokenPeriod} suffix="₹" onChange={setBrokenPeriod}/><MiniField label="Other deducted charges" value={otherDeduction} suffix="₹" onChange={setOtherDeduction}/></div>
         <div className="reconcile-table">
           <div><span>Processing fee</span><strong>{money(numberValue(primary.values.processingFee))}</strong></div><div><span>Documentation</span><strong>{money(numberValue(primary.values.documentationFee))}</strong></div><div><span>Insurance</span><strong>{money(numberValue(primary.values.insurance))}</strong></div><div><span>Advance EMI</span><strong>{money(numberValue(advanceEmi))}</strong></div><div><span>Other + broken period</span><strong>{money(numberValue(otherDeduction) + numberValue(brokenPeriod))}</strong></div>
         </div>
+        <div className="method-edit-grid">{Object.entries({ processingFee: "Processing fee", documentationFee: "Documentation", insurance: "Insurance", advanceEmi: "Advance EMI", brokenPeriod: "Broken-period interest", otherDeduction: "Other charge" }).map(([key, label]) => <div className="field" key={key}><Label>{label} treatment</Label><select value={chargeTreatments[key]} onChange={(event) => setChargeTreatments((current) => ({ ...current, [key]: event.target.value as ChargeTreatment }))}><option value="unknown">Unknown</option><option value="financed">Financed</option><option value="deducted">Deducted from disbursement</option><option value="upfront">Paid separately upfront</option><option value="not-applicable">Not applicable</option></select></div>)}</div>
       </div>
     </div>
 
@@ -302,12 +314,7 @@ export function ApprovalGate() {
       <div className="gate-finding-list">{findings.map((finding, index) => <article className={finding.level} key={`${finding.title}-${index}`}>{finding.level === "green" ? <CheckCircle2/> : <AlertTriangle/>}<div><strong>{finding.title}</strong><p>{finding.detail}</p>{finding.action && <span>Next: {finding.action}</span>}</div></article>)}</div>
     </div>
 
-    <div className="card lender-compare-card">
-      <div className="section-kicker"><span>C</span> Alternative offer</div><h2>Compare another lender</h2><p className="section-copy">Use APR when available. The comparison includes compulsory upfront charges.</p>
-      <div className="form-grid compare-offer-form"><div className="field"><Label>Lender name</Label><Input value={secondName} onChange={(event) => setSecondName(event.target.value)}/></div><MiniField label="Loan amount" value={secondAmount} suffix="₹" onChange={setSecondAmount}/><MiniField label="Rate" value={secondRate} suffix="%" onChange={setSecondRate}/><MiniField label="APR" value={secondApr} suffix="%" onChange={setSecondApr}/><MiniField label="Tenure" value={secondMonths} suffix="months" onChange={setSecondMonths}/><MiniField label="Quoted EMI" value={secondEmi} suffix="₹" onChange={setSecondEmi}/><MiniField label="Compulsory charges" value={secondCharges} suffix="₹" onChange={setSecondCharges}/></div>
-      <div className="offer-cards"><article><span>PRIMARY DOCUMENTED OFFER</span><h3>{evidence.authority ? labels[evidence.authority.type] : "Current offer"}</h3><strong>{money(primary.totalCost)}</strong><p>{money(primary.emi)}/month · APR {primary.values.apr || "not stated"}%</p></article><article className={second.rate ? (second.total < primary.totalCost ? "better" : "") : "empty"}><span>ALTERNATIVE OFFER</span><h3>{secondName || "Other lender"}</h3><strong>{second.rate ? money(second.total) : "Enter offer"}</strong><p>{second.rate ? `${money(second.emi)}/month · APR ${second.apr || "not stated"}%` : "Rate and tenure required"}</p></article></div>
-      {second.rate > 0 && <div className={`offer-difference ${second.total < primary.totalCost ? "saving" : "cost"}`}>{second.total < primary.totalCost ? `${secondName} is cheaper by ${money(primary.totalCost - second.total)}` : `Primary offer is cheaper by ${money(second.total - primary.totalCost)}`}</div>}
-    </div>
+    <div className="card lender-compare-card"><div className="section-kicker"><span>C</span> Financier comparison</div><h2>Use the full comparison workspace</h2><p className="section-copy">The dedicated Financiers tab audits 2–5 offers with the same central formulas, APR, KFS completeness and prepayment evidence. This Approval Gate no longer keeps a weaker duplicate comparison.</p></div>
 
     <div className="gate-actions no-print"><Button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(report)}`, "_blank", "noopener,noreferrer")}><MessageCircle size={17}/> WhatsApp approval report</Button><Button type="button" variant="outline" onClick={() => window.print()}><Printer size={17}/> Save / print PDF</Button></div>
     <p className="report-disclaimer">Green confirms mathematical consistency only. It is not legal or lender approval. Check the original signed KFS, sanction letter, agreement and receipts.</p>

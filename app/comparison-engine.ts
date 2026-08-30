@@ -12,7 +12,16 @@ import {
 
 export type QuoteMethod = InterestMethod | "unknown";
 export type ChargeRequirement = "mandatory" | "optional" | "unknown";
-export type QuoteCharge = ChargeInput & { id: string; requirement: ChargeRequirement };
+export type QuoteCharge = ChargeInput & {
+  id: string;
+  requirement: ChargeRequirement;
+  amountType?: "fixed" | "percentage";
+  percentage?: number;
+  percentageBase?: "sanctioned" | "financed";
+  minimum?: number;
+  maximum?: number;
+  taxPercent?: number;
+};
 
 export type FinanceQuote = {
   id: string;
@@ -53,14 +62,22 @@ export type ComparisonFinding = { severity: ComparisonSeverity; title: string; d
 const decisionLabel = (decision: "ready" | "verify" | "do-not-sign") =>
   decision === "ready" ? "READY TO CONSIDER" : decision === "verify" ? "VERIFY BEFORE PROCEEDING" : "DO NOT SIGN YET";
 
-function sums(charges: QuoteCharge[]) {
-  const sum = (treatment: ChargeTreatment) => charges.filter((charge) => charge.treatment === treatment).reduce((total, charge) => total + Math.max(0, charge.amount), 0);
+function resolvedChargeAmount(charge: QuoteCharge, principal: number) {
+  const raw = charge.amountType === "percentage" ? principal * Math.max(0, charge.percentage || 0) / 100 : Math.max(0, charge.amount);
+  const bounded = Math.min(charge.maximum && charge.maximum > 0 ? charge.maximum : Infinity, Math.max(charge.minimum || 0, raw));
+  return bounded * (1 + Math.max(0, charge.taxPercent || 0) / 100);
+}
+
+function sums(charges: QuoteCharge[], principal: number) {
+  const amount = (charge: QuoteCharge) => resolvedChargeAmount(charge, principal);
+  const sum = (treatment: ChargeTreatment) => charges.filter((charge) => charge.treatment === treatment).reduce((total, charge) => total + amount(charge), 0);
   return {
     financed: sum("financed"),
     deducted: sum("deducted"),
     upfront: sum("upfront"),
-    all: charges.filter((charge) => charge.treatment !== "not-applicable").reduce((total, charge) => total + Math.max(0, charge.amount), 0),
-    compulsory: charges.filter((charge) => charge.requirement === "mandatory" && charge.treatment !== "not-applicable").reduce((total, charge) => total + Math.max(0, charge.amount), 0),
+    all: charges.filter((charge) => !["not-applicable", "unknown"].includes(charge.treatment)).reduce((total, charge) => total + amount(charge), 0),
+    compulsory: charges.filter((charge) => charge.requirement === "mandatory" && !["not-applicable", "unknown"].includes(charge.treatment)).reduce((total, charge) => total + amount(charge), 0),
+    unknown: charges.filter((charge) => amount(charge) > 0 && (charge.treatment === "unknown" || charge.requirement === "unknown")),
   };
 }
 
@@ -88,7 +105,7 @@ export function auditFinanceQuote(quote: FinanceQuote, basis?: ComparisonBasis) 
   const normalized = Boolean(basis);
   const amount = Math.max(0, normalized ? basis!.amount : quote.sanctionedAmount);
   const months = Math.max(1, Math.round(normalized ? basis!.months : (quote.instalments || quote.months)));
-  const charges = sums(quote.charges);
+  const charges = sums(quote.charges, amount);
   const grossSanctioned = amount + charges.financed;
   const derivedNet = Math.max(0, amount - charges.deducted);
   const netAvailable = normalized ? derivedNet : (quote.netDisbursement > 0 ? quote.netDisbursement : derivedNet);
@@ -108,7 +125,7 @@ export function auditFinanceQuote(quote: FinanceQuote, basis?: ComparisonBasis) 
     lenderNetDisbursement: normalized ? undefined : quote.netDisbursement || undefined,
     lenderTotalInterest: normalized ? undefined : quote.lenderTotalInterest || undefined,
     lenderTotalRepayment: normalized ? undefined : quote.lenderTotalRepayment || undefined,
-    charges: quote.charges.map(({ key, label, amount: chargeAmount, treatment }) => ({ key, label, amount: chargeAmount, treatment })),
+    charges: quote.charges.map((charge) => ({ key: charge.key, label: charge.label, amount: resolvedChargeAmount(charge, amount), treatment: charge.treatment })),
     kfs: quote.kfs,
   }) : null;
 
@@ -128,9 +145,13 @@ export function auditFinanceQuote(quote: FinanceQuote, basis?: ComparisonBasis) 
     chargeKnown: quote.prepaymentTermsKnown,
     contractualPercent: Math.max(quote.partPrepaymentPercent, quote.foreclosurePercent),
   });
-  const missingCritical = amount <= 0 || quote.annualRate <= 0 || months <= 0 || !methodKnown || (!normalized && quote.lenderEmi <= 0);
-  const decision: "ready" | "verify" | "do-not-sign" = missingCritical || audit?.decision === "do-not-sign"
+  const missingCritical = amount <= 0 || quote.annualRate < 0 || months <= 0 || !methodKnown || (!normalized && quote.lenderEmi <= 0);
+  const evidenceChecks = [amount > 0, quote.annualRate >= 0, months > 0, methodKnown, normalized || quote.lenderEmi > 0, normalized || quote.netDisbursement > 0, quote.lenderApr > 0, quote.prepaymentTermsKnown, quote.penalChargesKnown, !charges.unknown.length];
+  const evidenceConfidence = Math.round(evidenceChecks.filter(Boolean).length / evidenceChecks.length * 100);
+  const decision: "ready" | "verify" | "do-not-sign" = audit?.decision === "do-not-sign"
     ? "do-not-sign"
+    : missingCritical || charges.unknown.length
+      ? "verify"
     : audit?.decision === "ready" && quote.prepaymentTermsKnown && quote.penalChargesKnown
       ? "ready"
       : "verify";
@@ -165,10 +186,12 @@ export function auditFinanceQuote(quote: FinanceQuote, basis?: ComparisonBasis) 
     kfsCompleteness: audit?.kfsCompleteness ?? Math.round(quote.kfs.filter((item) => item.status === "present").length / Math.max(1, quote.kfs.length) * 100),
     prepayment,
     prepaymentConfirmed: quote.prepaymentTermsKnown,
+    unknownCharges: charges.unknown,
+    evidenceConfidence,
     questions: missingQuestions(quote),
     decision,
     decisionLabel: decisionLabel(decision),
-    eligibleForOverall: !missingCritical && Boolean(aprResult.nominalApr) && Boolean(quote.netDisbursement)
+    eligibleForOverall: !missingCritical && !charges.unknown.length && Boolean(aprResult.nominalApr) && Boolean(normalized || quote.netDisbursement)
       && quote.prepaymentTermsKnown && quote.penalChargesKnown && !(audit?.criticalMissing.length),
   };
 }
@@ -240,7 +263,7 @@ export function compareFinanceQuotes(quotes: FinanceQuote[], mode: ComparisonMod
     lowestInterest: minWinners(audits, (item) => item.totalInterest),
     lowestRepayment: minWinners(audits, (item) => item.totalRepayment),
     lowestLoanCost: minWinners(audits, (item) => item.totalLoanCost),
-    lowestFees: minWinners(audits, (item) => item.totalCharges || 0.0001),
+    lowestFees: minWinners(audits, (item) => item.unknownCharges.length ? Infinity : item.totalCharges || 0.0001),
     bestTransparency: (() => {
       const max = Math.max(...audits.map((item) => item.kfsCompleteness), 0);
       return audits.filter((item) => item.kfsCompleteness === max).map((item) => item.quote.id);
@@ -283,22 +306,22 @@ export function compareFinanceQuotes(quotes: FinanceQuote[], mode: ComparisonMod
 }
 
 export function createEmptyQuote(id: string, index: number): FinanceQuote {
-  const charge = (key: string, label: string): QuoteCharge => ({ id: `${id}-${key}`, key, label, amount: 0, treatment: "not-applicable", requirement: "unknown" });
+  const charge = (key: string, label: string): QuoteCharge => ({ id: `${id}-${key}`, key, label, amount: 0, amountType: "fixed", percentage: 0, taxPercent: 0, treatment: "not-applicable", requirement: "unknown" });
   return {
     id,
     lenderName: `Finance Offer ${index}`,
     quoteReference: "",
     quoteDate: "",
     notes: "",
-    requestedAmount: 600000,
-    sanctionedAmount: 600000,
+    requestedAmount: 0,
+    sanctionedAmount: 0,
     netDisbursement: 0,
     downPayment: 0,
-    months: 60,
-    instalments: 60,
+    months: 0,
+    instalments: 0,
     lenderEmi: 0,
-    annualRate: 8.5,
-    method: "reducing",
+    annualRate: 0,
+    method: "unknown",
     rateType: "unknown",
     lenderApr: 0,
     lenderTotalInterest: 0,

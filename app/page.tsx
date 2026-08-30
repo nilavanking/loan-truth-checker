@@ -12,6 +12,8 @@ import { ApprovalGate } from "@/app/approval-gate";
 import { TruthAudit } from "@/app/truth-audit";
 import { AuditToolkit } from "@/app/audit-toolkit";
 import { FinancierComparison } from "@/app/financier-comparison";
+import { brokenPeriodInterest, flatEmi, foreclosureEstimate, prepaymentOptions, reducingEmi, solveReducingRate } from "@/loan-engine";
+import type { DayCountBasis } from "@/loan-engine";
 
 type Method = "reducing" | "flat";
 type Rest = "monthly" | "annual";
@@ -23,28 +25,13 @@ const money = (v: number) => INR0.format(Number.isFinite(v) ? v : 0);
 const money2 = (v: number) => INR2.format(Number.isFinite(v) ? v : 0);
 const num = (v: string) => Math.max(0, Number(v) || 0);
 
-function reducingEmi(p: number, annual: number, months: number) {
-  if (!p || !months) return 0;
-  const r = annual / 1200;
-  return r ? p * r * (1 + r) ** months / ((1 + r) ** months - 1) : p / months;
-}
-function flatEmi(p: number, annual: number, months: number) {
-  return p && months ? (p + p * annual / 100 * months / 12) / months : 0;
-}
 function annualPayment(p: number, annual: number, years: number) {
   if (!p || !years) return 0;
   const r = annual / 100;
   return r ? p * r * (1 + r) ** years / ((1 + r) ** years - 1) : p / years;
 }
 function impliedRate(p: number, emi: number, months: number) {
-  if (!p || !emi || !months || emi * months <= p) return 0;
-  let low = 0, high = 100;
-  for (let i = 0; i < 100; i++) {
-    const mid = (low + high) / 2;
-    if (reducingEmi(p, mid, months) < emi) low = mid;
-    else high = mid;
-  }
-  return (low + high) / 2;
+  return solveReducingRate(p, emi, months);
 }
 function impliedPrincipal(emi: number, annual: number, months: number) {
   const unit = reducingEmi(1, annual, months);
@@ -83,17 +70,6 @@ function yearlySummary(rows: ReturnType<typeof monthlySchedule>) {
   }
   return out;
 }
-function remainingAfterPrepay(balance: number, annual: number, emi: number) {
-  if (balance <= 0 || emi <= 0) return { months: 0, interest: 0 };
-  const r = annual / 1200; let b = balance, months = 0, interest = 0;
-  while (b > .01 && months < 600) {
-    const i = b * r, principal = Math.min(b, emi - i);
-    if (principal <= 0) return { months: 600, interest: Infinity };
-    interest += i; b -= principal; months++;
-  }
-  return { months, interest };
-}
-
 function Field({ label, value, onChange, suffix, type = "decimal" }: { label:string; value:string; onChange:(v:string)=>void; suffix:string; type?:"decimal"|"date" }) {
   return <div className="field"><Label>{label}</Label><div className="input-wrap"><Input type={type === "date" ? "date" : "text"} inputMode={type === "date" ? undefined : "decimal"} value={value} onChange={e=>onChange(type === "date" ? e.target.value : e.target.value.replace(/[^0-9.]/g,""))} aria-label={label}/>{suffix && <span>{suffix}</span>}</div></div>;
 }
@@ -114,7 +90,9 @@ export default function Home() {
   const [quotePrincipal,setQuotePrincipal]=useState("611000"), [quoteRate,setQuoteRate]=useState("6.5"), [quoteMonths,setQuoteMonths]=useState("60"), [quoteEmi,setQuoteEmi]=useState("");
   const [processing,setProcessing]=useState("0"), [documentation,setDocumentation]=useState("0"), [insurance,setInsurance]=useState("0"), [other,setOther]=useState("0"), [advanceEmi,setAdvanceEmi]=useState("0");
   const [disbursalDate,setDisbursalDate]=useState(""), [firstEmiDate,setFirstEmiDate]=useState("");
+  const [interestStartDate,setInterestStartDate]=useState(""), [dayCountBasis,setDayCountBasis]=useState<DayCountBasis>("unknown");
   const [prepayMonth,setPrepayMonth]=useState("12"), [prepayAmount,setPrepayAmount]=useState("100000"), [chargeRate,setChargeRate]=useState("5"), [chargeGst,setChargeGst]=useState("18");
+  const [lastEmiDate,setLastEmiDate]=useState(""), [settlementDate,setSettlementDate]=useState("");
 
   const base=useMemo(()=>{
     const p=num(principal),r=num(rate),n=Math.max(1,Math.round(num(months))),years=Math.max(1,Math.ceil(n/12));
@@ -139,25 +117,23 @@ export default function Home() {
     const expectedMonthly=reducingEmi(p,stated,n),expectedFlat=flatEmi(p,stated,n),expectedAnnual=annualPayment(p,stated,years)/12;
     const candidates=[{name:"monthly-rest reducing",value:expectedMonthly},{name:"annual-rest estimate",value:expectedAnnual},{name:"flat-rate pricing",value:expectedFlat}].sort((a,b)=>Math.abs(emi-a.value)-Math.abs(emi-b.value));
     const realRate=impliedRate(p,emi,n),unexplained=impliedPrincipal(emi,stated,n)-p,apr=impliedRate(Math.max(1,p-fees),emi,n);
-    let brokenDays=0;
-    if(disbursalDate&&firstEmiDate){const days=(new Date(firstEmiDate).getTime()-new Date(disbursalDate).getTime())/86400000;brokenDays=Math.max(0,Math.round(days-30));}
-    const brokenInterest=p*stated/100/365*brokenDays,flags:string[]=[];
+    const broken=brokenPeriodInterest(p,stated,interestStartDate||disbursalDate,firstEmiDate,dayCountBasis);
+    const brokenDays=broken.days,brokenInterest=broken.interest,flags:string[]=[];
     if(emi&&candidates[0].name!=="monthly-rest reducing")flags.push("The quoted EMI is closest to "+candidates[0].name+", not the monthly reducing-balance result.");
     if(emi&&unexplained>100)flags.push("The EMI behaves as if approximately "+money(unexplained)+" extra principal was financed.");
     if(emi&&realRate>stated+.1)flags.push("The quoted EMI implies approximately "+realRate.toFixed(2)+"% monthly-rest interest.");
     if(fees&&emi)flags.push("Compulsory/upfront charges raise estimated APR to approximately "+apr.toFixed(2)+"%.");
-    if(brokenInterest>1)flags.push("Dates indicate about "+brokenDays+" extra days and estimated broken-period interest of "+money(brokenInterest)+".");
+    if(brokenInterest>1)flags.push(`The entered dates produce ${brokenDays} interest days and ${broken.estimated?"estimated ":""}broken-period interest of ${money(brokenInterest)} using ${broken.denominator} days.`);
     return {emi,expectedMonthly,expectedAnnual,expectedFlat,realRate,unexplained,apr,total:emi*n,likely:emi?candidates[0].name:"Enter the exact EMI",flags,brokenInterest};
-  },[quotePrincipal,quoteRate,quoteMonths,quoteEmi,processing,documentation,insurance,other,advanceEmi,disbursalDate,firstEmiDate]);
+  },[quotePrincipal,quoteRate,quoteMonths,quoteEmi,processing,documentation,insurance,other,advanceEmi,disbursalDate,interestStartDate,firstEmiDate,dayCountBasis]);
 
   const prepay=useMemo(()=>{
-    const rows=monthlySchedule(num(principal),num(rate),Math.max(1,Math.round(num(months))),"reducing");
-    const at=Math.min(rows.length,Math.max(0,Math.round(num(prepayMonth)))),balance=at?rows[at-1].balance:num(principal);
-    const remainingOriginalInterest=rows.slice(at).reduce((s,x)=>s+x.interest,0),extra=Math.min(balance,num(prepayAmount));
-    const fee=extra*num(chargeRate)/100,gst=fee*num(chargeGst)/100,newBalance=Math.max(0,balance-extra),newPlan=remainingAfterPrepay(newBalance,num(rate),rows[0]?.payment||0);
-    const interestSaved=Math.max(0,remainingOriginalInterest-newPlan.interest),closureFee=balance*num(chargeRate)/100,closureGst=closureFee*num(chargeGst)/100;
-    return {balance,newBalance,charge:fee+gst,newMonths:newPlan.months,monthsSaved:Math.max(0,rows.length-at-newPlan.months),interestSaved,netBenefit:interestSaved-fee-gst,settlement:balance+closureFee+closureGst,closureInterestSaved:remainingOriginalInterest,closureNet:remainingOriginalInterest-closureFee-closureGst};
-  },[principal,rate,months,prepayMonth,prepayAmount,chargeRate,chargeGst]);
+    const feeRate=num(chargeRate),gstRate=num(chargeGst);
+    const result=prepaymentOptions(num(principal),num(rate),Math.max(1,Math.round(num(months))),num(prepayMonth),num(prepayAmount),feeRate*(1+gstRate/100));
+    const closureFee=result.balance*feeRate/100,closureGst=closureFee*gstRate/100;
+    const closure=foreclosureEstimate(result.balance,num(rate),lastEmiDate,settlementDate,feeRate,0,gstRate);
+    return {balance:result.balance,newBalance:result.newBalance,charge:result.charge,newMonths:result.keepEmi.months,monthsSaved:result.keepEmi.monthsSaved,interestSaved:result.keepEmi.interestSaved,netBenefit:result.keepEmi.netBenefit,settlement:closure.estimatedSettlement,accruedInterest:closure.accruedInterest,closureFee:closure.fee+closure.tax,closureInterestSaved:result.originalFutureInterest,closureNet:result.originalFutureInterest-closureFee-closureGst-closure.accruedInterest,keepTenure:result.keepTenure};
+  },[principal,rate,months,prepayMonth,prepayAmount,chargeRate,chargeGst,lastEmiDate,settlementDate]);
 
   const summaryText="Loan Truth Checker\\nLoan: "+money(num(principal))+" | Rate: "+num(rate)+"% | Tenure: "+num(months)+" months\\nMonthly-rest reducing EMI: "+money2(comparisons[0].payment)+"\\nTotal interest: "+money(comparisons[0].interest)+"\\nFlat EMI: "+money2(comparisons[2].payment)+"\\nFlat total interest: "+money(comparisons[2].interest)+"\\nSaving with monthly reducing vs flat: "+money(comparisons[2].interest-comparisons[0].interest)+"\\nVerify the official KFS before signing.";
   const share=async()=>{if(navigator.share)await navigator.share({title:"Loan Truth Checker",text:summaryText});else await navigator.clipboard.writeText(summaryText);};
@@ -174,6 +150,7 @@ export default function Home() {
 
       <TabsContent value="calculate" className="panel">
         <div className="panel-heading"><div><span>01</span><h3>EMI calculator</h3></div><p>Flat, monthly rest and annual rest</p></div>
+        <p className="fine-print"><strong>DEMO EXAMPLE:</strong> The prefilled ₹6,11,000 at 6.5% for 60 months is only an illustration, not a lender quote or recommendation.</p>
         <div className="form-grid three"><Field label="Loan amount" value={principal} onChange={setPrincipal} suffix="₹"/><Field label="Annual interest rate" value={rate} onChange={setRate} suffix="% p.a."/><Field label="Tenure" value={months} onChange={setMonths} suffix="months"/></div>
         <div className="option-block"><Label>Interest method</Label><div className="choice-grid two"><Choice active={method==="reducing"} onClick={()=>setMethod("reducing")} recommended>Reducing balance</Choice><Choice active={method==="flat"} onClick={()=>setMethod("flat")}>Flat rate</Choice></div></div>
         {method==="reducing"&&<div className="option-block"><Label>Interest rest period</Label><div className="choice-grid two"><Choice active={rest==="monthly"} onClick={()=>setRest("monthly")} recommended>Monthly Reducing Balance EMI</Choice><Choice active={rest==="annual"} onClick={()=>setRest("annual")}>Annual rest — comparison estimate</Choice></div><p className="fine-print">Compare this calculation with the method stated in your lender&apos;s KFS or sanction letter.</p></div>}
@@ -209,7 +186,7 @@ export default function Home() {
         <div className="form-grid"><Field label="Loan amount stated" value={quotePrincipal} onChange={setQuotePrincipal} suffix="₹"/><Field label="Interest stated" value={quoteRate} onChange={setQuoteRate} suffix="% p.a."/><Field label="Tenure" value={quoteMonths} onChange={setQuoteMonths} suffix="months"/><Field label="Exact EMI quoted" value={quoteEmi} onChange={setQuoteEmi} suffix="₹"/></div>
         <div className="subhead">Compulsory and deducted charges</div>
         <div className="form-grid"><Field label="Processing + GST" value={processing} onChange={setProcessing} suffix="₹"/><Field label="Documentation + GST" value={documentation} onChange={setDocumentation} suffix="₹"/><Field label="Credit-life insurance" value={insurance} onChange={setInsurance} suffix="₹"/><Field label="Other compulsory charges" value={other} onChange={setOther} suffix="₹"/><Field label="Advance EMI deducted" value={advanceEmi} onChange={setAdvanceEmi} suffix="₹"/></div>
-        <div className="subhead">Broken-period interest check</div><div className="form-grid two-cols"><Field label="Disbursal date" value={disbursalDate} onChange={setDisbursalDate} suffix="" type="date"/><Field label="First EMI date" value={firstEmiDate} onChange={setFirstEmiDate} suffix="" type="date"/></div>
+        <div className="subhead">Broken-period interest check</div><div className="form-grid"><Field label="Disbursal date" value={disbursalDate} onChange={setDisbursalDate} suffix="" type="date"/><Field label="Interest commencement date" value={interestStartDate} onChange={setInterestStartDate} suffix="" type="date"/><Field label="First EMI date" value={firstEmiDate} onChange={setFirstEmiDate} suffix="" type="date"/><div className="field"><Label>Day-count basis</Label><select value={dayCountBasis} onChange={(event)=>setDayCountBasis(event.target.value as DayCountBasis)}><option value="unknown">Unknown — estimate</option><option value="actual-365">Actual/365</option><option value="actual-366">Actual/366</option><option value="actual-360">Actual/360</option><option value="lender-stated">Lender stated — denominator required</option></select></div></div>
         <div className={"verdict "+(audit.flags.length?"warning":"clear")}>{audit.flags.length?<AlertTriangle/>:<BadgeCheck/>}<div><span>CLOSEST FORMULA</span><strong>{audit.likely}</strong></div></div>
         <div className="metrics audit-metrics"><Metric label="Monthly-rest expected EMI" value={money2(audit.expectedMonthly)} tone="good"/><Metric label="Annual-rest monthly estimate" value={money2(audit.expectedAnnual)}/><Metric label="Flat expected EMI" value={money2(audit.expectedFlat)} tone="warn"/><Metric label="Rate implied by EMI" value={audit.emi?audit.realRate.toFixed(2)+"%":"—"}/><Metric label="APR after charges" value={audit.emi?audit.apr.toFixed(2)+"%":"—"}/><Metric label="Possible extra financed" value={audit.emi?money(Math.max(0,audit.unexplained)):"—"} tone={audit.unexplained>100?"warn":""}/><Metric label="All EMIs total" value={audit.emi?money(audit.total):"—"}/><Metric label="Broken-period interest" value={money(audit.brokenInterest)}/></div>
         <div className="flags"><h4>What needs attention</h4>{!audit.emi&&<p>Enter the exact EMI to reverse-calculate the quotation.</p>}{audit.flags.map((x,i)=><div key={i}><AlertTriangle size={16}/><p>{x}</p></div>)}{audit.emi&&!audit.flags.length&&<div className="ok"><BadgeCheck size={16}/><p>No mathematical mismatch found. Verify the KFS before signing.</p></div>}</div>
@@ -220,7 +197,8 @@ export default function Home() {
         <div className="panel-heading"><div><span>06</span><h3>Prepayment and closure</h3></div><p>See the real benefit after charges</p></div>
         <div className="form-grid"><Field label="Payment after EMI number" value={prepayMonth} onChange={setPrepayMonth} suffix="month"/><Field label="Extra principal payment" value={prepayAmount} onChange={setPrepayAmount} suffix="₹"/><Field label="Prepayment charge" value={chargeRate} onChange={setChargeRate} suffix="%"/><Field label="GST on charge" value={chargeGst} onChange={setChargeGst} suffix="%"/></div>
         <div className="subhead">Part-payment result</div><div className="metrics audit-metrics"><Metric label="Balance at selected month" value={money(prepay.balance)}/><Metric label="New principal balance" value={money(prepay.newBalance)}/><Metric label="Charge including GST" value={money(prepay.charge)} tone="warn"/><Metric label="Interest saved" value={money(prepay.interestSaved)} tone="good"/><Metric label="Months saved" value={String(prepay.monthsSaved)}/><Metric label="Net benefit after charge" value={money(prepay.netBenefit)} tone={prepay.netBenefit>=0?"good":"warn"}/></div>
-        <div className="subhead">Full closure result</div><div className="closure-card"><div><span>Estimated settlement amount</span><strong>{money(prepay.settlement)}</strong></div><div><span>Future interest avoided</span><strong>{money(prepay.closureInterestSaved)}</strong></div><div><span>Net benefit after closure charge</span><strong>{money(prepay.closureNet)}</strong></div></div>
+        <div className="subhead">Alternative: keep the remaining tenure</div><div className="metrics audit-metrics"><Metric label="Revised EMI" value={money2(prepay.keepTenure.emi)}/><Metric label="Remaining months" value={String(prepay.keepTenure.months)}/><Metric label="Interest saved" value={money(prepay.keepTenure.interestSaved)} tone="good"/><Metric label="Net benefit after charge" value={money(prepay.keepTenure.netBenefit)} tone={prepay.keepTenure.netBenefit>=0?"good":"warn"}/></div>
+        <div className="subhead">Full closure on a selected date</div><div className="form-grid two-cols"><Field label="Last EMI date" value={lastEmiDate} onChange={setLastEmiDate} suffix="" type="date"/><Field label="Settlement date" value={settlementDate} onChange={setSettlementDate} suffix="" type="date"/></div><div className="closure-card"><div><span>Estimated settlement amount</span><strong>{money(prepay.settlement)}</strong></div><div><span>Accrued interest</span><strong>{money(prepay.accruedInterest)}</strong></div><div><span>Fee including GST</span><strong>{money(prepay.closureFee)}</strong></div><div><span>Future interest avoided</span><strong>{money(prepay.closureInterestSaved)}</strong></div><div><span>Net benefit after closure cost</span><strong>{money(prepay.closureNet)}</strong></div></div>
         <p className="fine-print">Uses the monthly reducing schedule and the charge entered above. Obtain the lender&apos;s dated settlement statement and verify regulatory applicability before paying.</p>
       </TabsContent>
 
@@ -231,7 +209,7 @@ export default function Home() {
         <div className="rule-card featured"><ShieldCheck/><div><span>🟢 IN FORCE · RBI KFS</span><h4>Complete loan-cost disclosure</h4><p>Verify annual rate, APR, EMI, charges, net disbursement and the amortisation schedule in the lender&apos;s written KFS.</p></div></div>
         <div className="rule-grid"><article><span>🟢 IN FORCE</span><h4>KFS disclosure</h4><p>Retail term-loan figures must be capable of independent verification.</p></article><article><span>🟢 IN FORCE</span><h4>Prepayment directions</h4><p>Applicability depends on date, rate type, borrower, purpose and lender category.</p></article><article><span>⚪ LENDER POLICY</span><h4>Contractual fees</h4><p>A lender&apos;s fee schedule is not itself an RBI regulation.</p></article><article><span>🔵 GUIDANCE</span><h4>Collect evidence</h4><p>Keep the KFS, sanction letter, agreement, schedule, receipts and insurance invoice.</p></article></div>
         <div className="checklist"><h4>Check before signing</h4>{["Official sanction letter","Key Facts Statement (KFS)","Customer IRR / annualised interest rate","Flat or reducing method stated","Monthly/annual rest period stated","APR computation sheet","Exact EMI and number of instalments","Total interest and total repayment","Complete amortisation schedule","Processing/documentation fees with GST","Insurance and third-party receipts","Advance EMI and broken-period interest","Part-payment and foreclosure terms"].map((item,i)=><label key={item}><input type="checkbox"/><span>{String(i+1).padStart(2,"0")}</span>{item}</label>)}</div>
-        <div className="sources"><h4>Official references</h4><a href="https://www.rbi.org.in/Scripts/BS_ViewMasDirections.aspx?id=12550" target="_blank" rel="noreferrer">Reserve Bank of India — KFS rules</a><a href="https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12888&Mode=0" target="_blank" rel="noreferrer">Reserve Bank of India — Pre-payment Charges Directions, 2025</a></div>
+        <div className="sources"><h4>Official references</h4><a href="https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12663&Mode=0" target="_blank" rel="noreferrer">Reserve Bank of India — KFS circular RBI/2024-25/18</a><a href="https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12878&Mode=0" target="_blank" rel="noreferrer">Reserve Bank of India — Pre-payment Charges Directions, 2025</a></div>
         <p className="fine-print">Independent tool. Not an official RBI application and not affiliated with or endorsed by any bank, NBFC, or lender. Loan figures entered here are calculated in your browser and are not uploaded by this tool. The website itself is publicly accessible.</p>
       </TabsContent>
     </Tabs>

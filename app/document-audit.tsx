@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { flatEmi, reducingEmi } from "@/loan-engine";
 
 export type AuditValues = {
   loanAmount: string;
@@ -69,18 +70,7 @@ export const money = (value: number) =>
 
 export const numberValue = (value: string) => Number(value.replace(/[^0-9.-]/g, "")) || 0;
 
-export function reducingEmi(principal: number, annualRate: number, months: number) {
-  if (!principal || !months) return 0;
-  const rate = annualRate / 1200;
-  if (!rate) return principal / months;
-  const growth = Math.pow(1 + rate, months);
-  return (principal * rate * growth) / (growth - 1);
-}
-
-export function flatEmi(principal: number, annualRate: number, months: number) {
-  if (!principal || !months) return 0;
-  return (principal + principal * (annualRate / 100) * (months / 12)) / months;
-}
+export { reducingEmi, flatEmi };
 
 function cleanAmount(raw?: string) {
   if (!raw) return "";
@@ -176,6 +166,7 @@ export function DocumentAudit() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Upload a KFS, sanction letter, quotation, photo, PDF, TXT or CSV.");
+  const [saveLocally, setSaveLocally] = useState(true);
 
   const analyseText = (text: string, name = fileName || "Pasted text") => {
     const parsed = parseValues(text);
@@ -184,7 +175,7 @@ export function DocumentAudit() {
     setValues(parsed);
     setScheduleRows(rows);
     setFileName(name);
-    localStorage.setItem("loan-truth-checker:last-kfs-extraction", JSON.stringify({ name, extractedAt: new Date().toISOString(), values: parsed }));
+    if (saveLocally) localStorage.setItem("loan-truth-checker:last-kfs-extraction", JSON.stringify({ name, extractedAt: new Date().toISOString(), values: parsed, evidenceState: "extracted" }));
     const detected = Object.entries(parsed).filter(([key, value]) => !["method", "rest"].includes(key) && value).length;
     setStatus(`Detected ${detected} loan figures${rows.length ? ` and ${rows.length} schedule rows` : ""}. Review and correct any OCR errors below.`);
   };
@@ -391,7 +382,9 @@ export function DocumentAudit() {
       <div className="card scan-upload-card">
         <div className="section-kicker"><span>03</span> Document truth scanner</div>
         <h2>Upload the lender’s document</h2>
-        <p className="section-copy">The document stays in this browser. It is not uploaded to us or saved after you leave.</p>
+        <p className="section-copy">The original file is processed locally in your browser and is not uploaded by this tool. Extracted loan figures may be stored locally on this device when local saving is enabled.</p>
+        <label className="confidence-note"><input type="checkbox" checked={saveLocally} onChange={(event) => setSaveLocally(event.target.checked)}/><span> Save extracted figures locally on this device</span></label>
+        <Button type="button" variant="outline" onClick={() => { localStorage.removeItem("loan-truth-checker:last-kfs-extraction"); setStatus("Saved extracted KFS data was cleared from this device."); }}>Clear saved KFS data</Button>
 
         <input
           ref={inputRef}

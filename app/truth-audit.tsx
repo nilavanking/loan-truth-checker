@@ -57,6 +57,9 @@ export function TruthAudit() {
   const [chargeKnown, setChargeKnown] = useState(false);
   const [prepayPercent, setPrepayPercent] = useState("0");
   const [prepayFixed, setPrepayFixed] = useState("0");
+  const [advanceEmiTreatment, setAdvanceEmiTreatment] = useState<"first-emi-deducted" | "first-emi-upfront" | "additional-charge" | "unknown">("unknown");
+  const [disbursementDate, setDisbursementDate] = useState("");
+  const [firstPaymentDate, setFirstPaymentDate] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
 
   const charges = useMemo<ChargeInput[]>(() => chargeSeed.map((item) => ({ key: item.key, label: item.label, amount: numeric(chargeAmounts[item.key]), treatment: chargeTreatments[item.key] })), [chargeAmounts, chargeTreatments]);
@@ -66,8 +69,8 @@ export function TruthAudit() {
     baseLoanAmount: numeric(loanAmount), annualRate: numeric(rate), method, rateType, months: numeric(months),
     lenderEmi: numeric(lenderEmi) || undefined, lenderApr: numeric(lenderApr) || undefined,
     lenderTotalInterest: numeric(lenderInterest) || undefined, lenderTotalRepayment: numeric(lenderRepayment) || undefined,
-    charges, kfs,
-  }), [vehiclePrice, downPayment, exchangeValue, loanAmount, rate, method, rateType, months, lenderEmi, lenderApr, lenderInterest, lenderRepayment, charges, kfs]);
+    charges, kfs, advanceEmiTreatment, disbursementDate: disbursementDate || undefined, firstPaymentDate: firstPaymentDate || undefined,
+  }), [vehiclePrice, downPayment, exchangeValue, loanAmount, rate, method, rateType, months, lenderEmi, lenderApr, lenderInterest, lenderRepayment, charges, kfs, advanceEmiTreatment, disbursementDate, firstPaymentDate]);
   const prepayment = useMemo(() => determinePrepaymentRule({ rateType, borrowerType, purpose, sanctionDate, chargeKnown, contractualPercent: numeric(prepayPercent), contractualFixed: numeric(prepayFixed) }), [rateType, borrowerType, purpose, sanctionDate, chargeKnown, prepayPercent, prepayFixed]);
   const assetFundingNeed = Math.max(0, numeric(vehiclePrice) - numeric(downPayment) - numeric(exchangeValue));
   const questions = Array.from(new Set([...report.findings.map((item) => item.ask).filter(Boolean), ...report.criticalMissing.map((item) => `Please provide the written ${item.label}.`)])) as string[];
@@ -108,7 +111,7 @@ export function TruthAudit() {
   return <section className="truth-workspace">
     <div className="truth-commandbar">
       <div><span>TRUTH ENGINE V2</span><h2>Audit the offer before you sign</h2><p>One connected check for cost, KFS disclosure, prepayment terms and signing risk.</p></div>
-      <div className={`truth-score ${report.decision}`}><span>TRUTH SCORE</span><strong>{report.truthScore}</strong><small>/ 100</small></div>
+      <div className={`truth-score ${report.decision}`}><span>TRUTH SCORE</span><strong>{report.truthScore}</strong><small>/ 100 · Evidence {report.evidenceConfidence}%</small></div>
     </div>
 
     <div className="truth-steps">
@@ -122,7 +125,8 @@ export function TruthAudit() {
 
       <article className="truth-card">
         <div className="truth-step"><span>2</span><div><strong>Classify every charge</strong><small>Financed, deducted, paid upfront or not applicable</small></div></div>
-        <div className="charge-table"><div className="charge-head"><span>Charge</span><span>Amount</span><span>Treatment</span></div>{chargeSeed.map((item) => <div className="charge-row" key={item.key}><strong>{item.label}</strong><div className="input-wrap"><Input aria-label={`${item.label} amount`} inputMode="decimal" value={chargeAmounts[item.key]} onChange={(event) => setChargeAmounts((current) => ({ ...current, [item.key]: event.target.value.replace(/[^0-9.]/g, "") }))}/><span>₹</span></div><select aria-label={`${item.label} treatment`} value={chargeTreatments[item.key]} onChange={(event) => setChargeTreatments((current) => ({ ...current, [item.key]: event.target.value as ChargeTreatment }))}><option value="financed">Financed in loan</option><option value="deducted">Deducted from disbursement</option><option value="upfront">Paid separately upfront</option><option value="not-applicable">Not applicable / zero</option></select></div>)}</div>
+        <div className="charge-table"><div className="charge-head"><span>Charge</span><span>Amount</span><span>Treatment</span></div>{chargeSeed.map((item) => <div className="charge-row" key={item.key}><strong>{item.label}</strong><div className="input-wrap"><Input aria-label={`${item.label} amount`} inputMode="decimal" value={chargeAmounts[item.key]} onChange={(event) => setChargeAmounts((current) => ({ ...current, [item.key]: event.target.value.replace(/[^0-9.]/g, "") }))}/><span>₹</span></div><select aria-label={`${item.label} treatment`} value={chargeTreatments[item.key]} onChange={(event) => setChargeTreatments((current) => ({ ...current, [item.key]: event.target.value as ChargeTreatment }))}><option value="unknown">Unknown — verify</option><option value="financed">Financed in loan</option><option value="deducted">Deducted from disbursement</option><option value="upfront">Paid separately upfront</option><option value="not-applicable">Not applicable / confirmed zero</option></select></div>)}</div>
+        <div className="truth-selects"><label>Advance EMI meaning<select value={advanceEmiTreatment} onChange={(event) => setAdvanceEmiTreatment(event.target.value as typeof advanceEmiTreatment)}><option value="unknown">Unknown — verify</option><option value="first-emi-deducted">First EMI deducted from disbursement</option><option value="first-emi-upfront">First EMI paid separately</option><option value="additional-charge">Additional lender charge</option></select></label><label>Disbursement date<Input type="date" value={disbursementDate} onChange={(event) => setDisbursementDate(event.target.value)}/></label><label>First regular EMI date<Input type="date" value={firstPaymentDate} onChange={(event) => setFirstPaymentDate(event.target.value)}/></label></div>
       </article>
 
       <article className="truth-card">
@@ -134,7 +138,7 @@ export function TruthAudit() {
 
     <article className="truth-card apr-card">
       <div className="truth-step"><span>4</span><div><strong>True borrowing cost</strong><small>Advertised rate is not treated as the full price</small></div></div>
-      <div className="apr-hero"><div><span>QUOTED RATE</span><strong>{numeric(rate).toFixed(2)}%</strong></div><Scale/><div><span>TRUE APR</span><strong>{report.apr.toFixed(2)}%</strong><small>{report.apr >= numeric(rate) ? "+" : ""}{(report.apr - numeric(rate)).toFixed(2)} percentage points</small></div></div>
+      <div className="apr-hero"><div><span>QUOTED RATE</span><strong>{numeric(rate).toFixed(2)}%</strong></div><Scale/><div><span>DERIVED NOMINAL APR</span><strong>{report.apr.toFixed(2)}%</strong><small>XIRR annualised cost {report.xirrApr.toFixed(2)}%</small></div></div>
       <div className="truth-metrics"><div><span>Gross sanctioned</span><strong>{money(report.grossSanctioned)}</strong></div><div><span>Net available</span><strong>{money(report.netAvailable)}</strong></div><div><span>Total EMI payments</span><strong>{money(report.totalEmiPayments)}</strong></div><div><span>Total interest</span><strong>{money(report.totalInterest)}</strong></div><div><span>Total fees / charges</span><strong>{money(report.totalFees)}</strong></div><div><span>True borrowing cost</span><strong>{money(report.trueBorrowingCost)}</strong></div><div><span>Effective annual rate</span><strong>{report.effectiveAnnualRate.toFixed(2)}%</strong></div><div><span>Amount deducted upfront</span><strong>{money(report.deductedCharges + report.upfrontCharges)}</strong></div></div>
       {report.apr > numeric(rate) + .1 && <div className="truth-alert"><AlertTriangle/><div><strong>TRUTH ALERT</strong><p>Your actual borrowing cost is higher than the headline interest rate because fees or deductions reduce the value received while repayment remains based on the financed principal.</p></div></div>}
       {method === "flat" && <div className="flat-warning"><strong>{numeric(rate).toFixed(2)}% FLAT ≠ {numeric(rate).toFixed(2)}% REDUCING</strong><div><span>Flat EMI {money2(report.calculatedEmi)}</span><span>Equivalent reducing rate ≈ {report.equivalentReducingRate.toFixed(2)}%</span><span>Extra vs same-number reducing {money(report.flatExtraCost)}</span></div><p>The equivalent rate is solved mathematically from the same EMI and tenure; it is shown as an approximation because contractual cash-flow timing and charges can alter the final APR.</p></div>}
@@ -154,7 +158,7 @@ export function TruthAudit() {
     </article>
 
     <article className={`truth-report ${report.decision}`}>
-      <div className="report-top"><div><span>LOAN TRUTH REPORT</span><h2>{decisionTitle}</h2><p>{report.decision === "ready" ? "The entered evidence is complete and no material mathematical conflict was found." : report.decision === "do-not-sign" ? "A critical conflict must be corrected in writing before signing or disbursement." : "Important information remains missing, unclear or unverified."}</p></div><div><strong>{report.truthScore}</strong><span>/100</span></div></div>
+      <div className="report-top"><div><span>LOAN TRUTH REPORT</span><h2>{decisionTitle}</h2><p>{report.decision === "ready" ? "The entered evidence is complete and no material mathematical conflict was found." : report.decision === "do-not-sign" ? "A critical conflict must be corrected in writing before signing or disbursement." : "Important information remains missing, unclear or unverified."}</p></div><div><strong>{report.truthScore}</strong><span>/100 truth · {report.evidenceConfidence}% evidence</span></div></div>
       <div className="report-grid"><div><span>Advertised rate</span><strong>{numeric(rate).toFixed(2)}%</strong></div><div><span>Calculated EMI</span><strong>{money2(report.calculatedEmi)}</strong></div><div><span>Net amount available</span><strong>{money(report.netAvailable)}</strong></div><div><span>Total repayment</span><strong>{money(report.totalRepayment)}</strong></div><div><span>True APR</span><strong>{report.apr.toFixed(2)}%</strong></div><div><span>KFS completeness</span><strong>{report.kfsCompleteness}%</strong></div></div>
       <div className="finding-stack">{report.findings.map((finding, index) => <article className={finding.severity} key={`${finding.title}-${index}`}>{finding.severity === "pass" ? <BadgeCheck/> : finding.severity === "stop" ? <ShieldAlert/> : <AlertTriangle/>}<div><StatusPill value={finding.severity.toUpperCase()}/><h3>{finding.title}</h3><p>{finding.detail}</p><div className="why"><HelpCircle/><span><strong>Why?</strong> {finding.why}</span></div>{finding.ask && <blockquote>{finding.ask}</blockquote>}</div></article>)}</div>
       <div className="ask-list"><h3>Ask the lender</h3>{questions.length ? questions.map((question) => <blockquote key={question}>{question}</blockquote>) : <p>No additional question was generated from the entered evidence.</p>}</div>
@@ -163,7 +167,7 @@ export function TruthAudit() {
 
     <article className="truth-card rule-control">
       <div className="truth-step"><span>7</span><div><strong>Rule status control</strong><small>Regulations, guidance and lender policy remain separate</small></div></div>
-      <div className="rule-status-grid">{RULES.map((rule) => <article key={rule.title}><StatusPill value={rule.status}/><h3>{rule.title}</h3><dl><div><dt>Authority</dt><dd>{rule.authority}</dd></div><div><dt>Published</dt><dd>{rule.publicationDate}</dd></div><div><dt>Effective</dt><dd>{rule.effectiveDate}</dd></div><div><dt>Last verified</dt><dd>{rule.lastChecked}</dd></div></dl><p>{rule.explanation}</p>{rule.source.startsWith("http") ? <a href={rule.source} target="_blank" rel="noreferrer">Official source</a> : <small>{rule.source}</small>}</article>)}</div>
+      <div className="rule-status-grid">{RULES.map((rule) => <article key={rule.id}><StatusPill value={rule.status}/><h3>{rule.title}</h3><dl><div><dt>Authority</dt><dd>{rule.authority}</dd></div><div><dt>Reference</dt><dd>{rule.reference}</dd></div><div><dt>Published</dt><dd>{rule.publicationDate}</dd></div><div><dt>Effective</dt><dd>{rule.effectiveDate}</dd></div><div><dt>Last verified</dt><dd>{rule.lastChecked}</dd></div></dl><p>{rule.explanation}</p><small>{rule.applicability}</small>{rule.source.startsWith("http") ? <a href={rule.source} target="_blank" rel="noreferrer">Official source</a> : <small>{rule.source}</small>}</article>)}</div>
       <p className="independence"><ShieldCheck/> Independent tool. Not an official RBI application and not affiliated with or endorsed by any bank, NBFC, or lender.</p>
     </article>
   </section>;
