@@ -12,9 +12,10 @@ import {
 import {
   compareFinanceQuotes, ComparisonMode, createEmptyQuote, FinanceQuote, QuoteCharge,
 } from "@/app/comparison-engine";
+import { FinancierMatrixTable } from "@/components/loan/financier-matrix-table";
+import { formatInr } from "@/lib/money";
 
-const INR = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
-const money = (value: number) => INR.format(Number.isFinite(value) ? value : 0);
+const money = (value: number) => formatInr(value);
 const number = (value: string) => Math.max(0, Number(value.replace(/,/g, "")) || 0);
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const initialQuotes = () => [createEmptyQuote("offer-1", 1), createEmptyQuote("offer-2", 2)];
@@ -111,6 +112,7 @@ export function FinancierComparison() {
     ["Prepayment", (item) => item.prepaymentConfirmed ? item.prepayment.title : "Not confirmed"],
     ["KFS completeness", (item) => `${item.kfsCompleteness}%`], ["Evidence confidence", (item) => `${item.evidenceConfidence}%`], ["Approval Gate", (item) => item.decisionLabel],
   ];
+  const matrixRows = tableRows.map(([metric, render]) => ({ metric, values: Object.fromEntries(comparison.audits.map((item) => [item.quote.id, render(item)])) }));
 
   return <section className="financier-workspace">
     <div className="financier-hero">
@@ -210,7 +212,7 @@ export function FinancierComparison() {
 
     <article className="comparison-table-card">
       <div className="comparison-title"><div><span>SIDE-BY-SIDE AUDIT</span><h2>Confirmed quote vs Truth Engine calculation</h2></div><p>Flat and reducing rates are not directly comparable by headline percentage.</p></div>
-      <div className="comparison-scroll"><table className="financier-table"><thead><tr><th>Metric</th>{comparison.audits.map((item) => <th key={item.quote.id}>{item.quote.lenderName || "Unnamed offer"}</th>)}</tr></thead><tbody>{tableRows.map(([label, render]) => <tr key={label}><th>{label}</th>{comparison.audits.map((item) => <td key={item.quote.id}>{render(item)}</td>)}</tr>)}</tbody></table></div>
+      <FinancierMatrixTable lenders={comparison.audits.map((item) => ({ id: item.quote.id, name: item.quote.lenderName || "Unnamed offer" }))} rows={matrixRows}/>
     </article>
 
     <article className="score-card">

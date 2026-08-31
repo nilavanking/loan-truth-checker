@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Image from "next/image";
 import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, FileCheck2, IndianRupee, Landmark, Printer, ScanLine, Scale, SearchCheck, Share2, ShieldCheck, ShieldEllipsis, TrendingDown, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,15 +14,17 @@ import { AuditToolkit } from "@/app/audit-toolkit";
 import { FinancierComparison } from "@/app/financier-comparison";
 import { brokenPeriodInterest, flatEmi, foreclosureEstimate, prepaymentOptions, reducingEmi, solveReducingRate } from "@/loan-engine";
 import type { DayCountBasis } from "@/loan-engine";
+import { LoanInputForm } from "@/components/loan/loan-input-form";
+import { AmortizationVisuals } from "@/components/loan/amortization-visuals";
+import { AmortizationTable } from "@/components/loan/amortization-table";
+import { formatInr } from "@/lib/money";
 
 type Method = "reducing" | "flat";
 type Rest = "monthly" | "annual";
 type PayFrequency = "monthly" | "annual";
 type ScheduleView = "monthly" | "yearly";
-const INR0 = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
-const INR2 = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const money = (v: number) => INR0.format(Number.isFinite(v) ? v : 0);
-const money2 = (v: number) => INR2.format(Number.isFinite(v) ? v : 0);
+const money = (v: number) => formatInr(v);
+const money2 = (v: number) => formatInr(v, 2);
 const num = (v: string) => Math.max(0, Number(v) || 0);
 
 function annualPayment(p: number, annual: number, years: number) {
@@ -79,10 +81,6 @@ function Choice({ active, onClick, children, recommended }: { active:boolean; on
 function Metric({ label, value, tone="" }: { label:string; value:string; tone?:string }) {
   return <div className={"metric "+tone}><span>{label}</span><strong>{value}</strong></div>;
 }
-function ScheduleTable({ rows, yearly }: { rows:Array<{month?:number;year?:number;opening:number;payment:number;interest:number;principal:number;balance:number}>; yearly:boolean }) {
-  return <div className="schedule"><div className="schedule-head"><span>{yearly?"Year":"Month"}</span><span>Payment</span><span>Interest</span><span>Principal</span><span>Balance</span></div>{rows.map((r,i)=><div className="schedule-row" key={i}><b>{yearly?r.year:r.month}</b><span>{money(r.payment)}</span><span className="interest">{money(r.interest)}</span><span className="principal">{money(r.principal)}</span><span>{money(r.balance)}</span></div>)}</div>;
-}
-
 export default function Home() {
   const [principal,setPrincipal]=useState("611000"), [rate,setRate]=useState("6.5"), [months,setMonths]=useState("60");
   const [method,setMethod]=useState<Method>("reducing"), [rest,setRest]=useState<Rest>("monthly"), [payFrequency,setPayFrequency]=useState<PayFrequency>("monthly");
@@ -139,6 +137,7 @@ export default function Home() {
   const share=async()=>{if(navigator.share)await navigator.share({title:"Loan Truth Checker",text:summaryText});else await navigator.clipboard.writeText(summaryText);};
   const scheduleRows=base.isAnnualRest?base.annualRows:scheduleView==="yearly"?yearlySummary(base.monthlyRows):base.monthlyRows;
   const scheduleIsYearly=base.isAnnualRest||scheduleView==="yearly";
+  const updateLoanInputs=useCallback((values:{principal:string;rate:string;months:string})=>{setPrincipal(values.principal);setRate(values.rate);setMonths(values.months);},[]);
 
   return <main>
     <header className="topbar"><div className="brand-mark"><Image unoptimized className="brand-logo" src="/loan-truth-checker-logo-v2.png" alt="Loan Truth Checker logo" width={74} height={74} priority/></div><div><p>INDEPENDENT LOAN AUDITOR</p><h1>Loan Truth Checker</h1></div><span className="private">Local calculation</span></header>
@@ -151,16 +150,17 @@ export default function Home() {
       <TabsContent value="calculate" className="panel">
         <div className="panel-heading"><div><span>01</span><h3>EMI calculator</h3></div><p>Flat, monthly rest and annual rest</p></div>
         <p className="fine-print"><strong>DEMO EXAMPLE:</strong> The prefilled ₹6,11,000 at 6.5% for 60 months is only an illustration, not a lender quote or recommendation.</p>
-        <div className="form-grid three"><Field label="Loan amount" value={principal} onChange={setPrincipal} suffix="₹"/><Field label="Annual interest rate" value={rate} onChange={setRate} suffix="% p.a."/><Field label="Tenure" value={months} onChange={setMonths} suffix="months"/></div>
+        <LoanInputForm values={{principal,rate,months}} onValuesChange={updateLoanInputs}/>
         <div className="option-block"><Label>Interest method</Label><div className="choice-grid two"><Choice active={method==="reducing"} onClick={()=>setMethod("reducing")} recommended>Reducing balance</Choice><Choice active={method==="flat"} onClick={()=>setMethod("flat")}>Flat rate</Choice></div></div>
         {method==="reducing"&&<div className="option-block"><Label>Interest rest period</Label><div className="choice-grid two"><Choice active={rest==="monthly"} onClick={()=>setRest("monthly")} recommended>Monthly Reducing Balance EMI</Choice><Choice active={rest==="annual"} onClick={()=>setRest("annual")}>Annual rest — comparison estimate</Choice></div><p className="fine-print">Compare this calculation with the method stated in your lender&apos;s KFS or sanction letter.</p></div>}
         {method==="reducing"&&rest==="annual"&&<><div className="option-block"><Label>Payment frequency</Label><div className="choice-grid two"><Choice active={payFrequency==="monthly"} onClick={()=>setPayFrequency("monthly")}>Monthly payments</Choice><Choice active={payFrequency==="annual"} onClick={()=>setPayFrequency("annual")}>One annual payment</Choice></div></div><div className="notice"><AlertTriangle size={17}/><p>Annual-rest contracts differ. This estimate recalculates principal once each year. Confirm the lender’s KFS formula.</p></div></>}
         <div className="result-hero"><span>{base.isAnnualRest&&payFrequency==="annual"?"Estimated annual instalment":"Estimated monthly EMI"}</span><strong>{money2(base.displayPayment)}</strong><small>{method==="flat"?"Interest remains based on original principal":rest==="monthly"?"Outstanding principal recalculated every month":"Outstanding principal recalculated yearly"}</small></div>
         <div className="metrics"><Metric label="Principal" value={money(base.p)}/><Metric label="Total interest" value={money(base.interest)} tone="warn"/><Metric label="Total repayment" value={money(base.total)}/></div>
+        <AmortizationVisuals rows={base.isAnnualRest?base.annualRows:base.monthlyRows} principal={base.p} interest={base.interest}/>
         {rest==="annual"&&method==="reducing"&&num(months)%12!==0&&<div className="notice"><AlertTriangle size={17}/><p>Annual rest needs whole years. Estimate uses {base.years} years ({base.years*12} months).</p></div>}
         {!base.isAnnualRest&&<div className="view-switch"><span>Schedule display</span><div><Choice active={scheduleView==="monthly"} onClick={()=>setScheduleView("monthly")}>Monthly</Choice><Choice active={scheduleView==="yearly"} onClick={()=>setScheduleView("yearly")}>Yearly summary</Choice></div></div>}
         <Button className="schedule-button" variant="outline" onClick={()=>setShowSchedule(!showSchedule)}>Principal–interest working <ChevronDown className={showSchedule?"rotate":""} size={18}/></Button>
-        {showSchedule&&<ScheduleTable rows={scheduleRows} yearly={scheduleIsYearly}/>}
+        {showSchedule&&<AmortizationTable rows={scheduleRows} yearly={scheduleIsYearly}/>}
       </TabsContent>
 
       <TabsContent value="compare" className="panel">
